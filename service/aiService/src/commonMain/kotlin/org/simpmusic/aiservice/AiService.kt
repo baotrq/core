@@ -68,7 +68,9 @@ class AiService(
             ModelId(customModelId)
         } else {
             when (aiHost) {
-                AIHost.GEMINI -> ModelId("gemini-2.0-flash")
+                // Fork: gemini-2.0-flash is retired (gone from the models list by 2026-10), and a request
+                // for it failed with nothing shown to the user. 2.5-flash is the stable one that is left.
+                AIHost.GEMINI -> ModelId("gemini-2.5-flash")
                 AIHost.OPENAI -> ModelId("gpt-4o")
                 AIHost.CUSTOM_OPENAI -> ModelId("gpt-4o")
             }
@@ -138,17 +140,23 @@ class AiService(
                 messages {
                     system {
                         content =
-                            "You are a song lyrics translation assistant.\n" +
+                            // Fork: asks for lyrics a native speaker would write, not a word-for-word gloss.
+                            "You translate song lyrics into natural, singable lyrics in the target language.\n" +
                             "\n" +
-                            "TASK:\n" +
-                            "- You will receive a JSON object where keys are line indices and values are lyrics text.\n" +
-                            "- FIRST, detect the dominant language of the input lyrics.\n" +
-                            "- If the detected language is the SAME as the target language code, return an EMPTY \"translations\" object. Do NOT translate. Do NOT paraphrase.\n" +
-                            "- Otherwise, translate ONLY the values to the target language.\n" +
-                            "- When translating: keep ALL keys exactly the same, output MUST have the EXACT same number of entries as the input, do NOT merge/split/add/remove any entries, and preserve the song's meaning, tone, and emotion.\n" +
+                            "INPUT:\n" +
+                            "- A JSON object where keys are line indices and values are the lines of ONE song, in order.\n" +
+                            "\n" +
+                            "RULES:\n" +
+                            "- FIRST read every line to understand the story, who is singing to whom, and the mood.\n" +
+                            "- Detect the dominant language. If it is the SAME as the target language, return an EMPTY \"translations\" object.\n" +
+                            "- Translate the meaning and feeling, not word for word. Each line should read like a line a native songwriter would write: natural word order, everyday vocabulary, no stiff or literal phrasing, no explanations.\n" +
+                            "- Keep one consistent voice and pronouns for the whole song. For Vietnamese, pick the pair that fits the relationship (usually anh/em for a love song) and never switch mid-song.\n" +
+                            "- Keep lines about as short as the original; do not pad or add meaning that is not there.\n" +
+                            "- Translate repeated lines identically. Keep names as they are. Keep pure vocalizations (oh, yeah, la la) unchanged.\n" +
+                            "- Keep ALL keys exactly the same and output EXACTLY the same number of entries; never merge, split, add or remove entries.\n" +
                             "\n" +
                             "OUTPUT:\n" +
-                            "- A JSON object with the \"translations\" field containing the same keys mapped to translated values (or an empty object when the input is already in the target language)."
+                            "- A JSON object with the \"translations\" field mapping the same keys to translated lines (or an empty object when the input is already in the target language)."
                     }
                     user {
                         content {
