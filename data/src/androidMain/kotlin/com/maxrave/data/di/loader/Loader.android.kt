@@ -3,6 +3,8 @@ package com.maxrave.data.di.loader
 import com.maxrave.media3.di.loadMediaService
 import com.maxrave.data.loginsync.LoginSyncSenderRepositoryImpl
 import com.maxrave.data.loginsync.LoginSyncStore
+import com.maxrave.data.loginsync.SignInSyncRepositoryImpl
+import com.maxrave.domain.repository.SignInSyncRepository
 import com.maxrave.domain.repository.LoginSyncSenderRepository
 import org.koin.core.context.loadKoinModules
 import org.simpmusic.loginsync.LoginSyncClient
@@ -16,6 +18,7 @@ actual fun loadLoginSyncModule() {
     loadKoinModules(
         module {
             single { LoginSyncStore(get(), get(), get()) }
+            single<SignInSyncRepository> { SignInSyncRepositoryImpl(get()) }
             single<LoginSyncSenderRepository> { LoginSyncSenderRepositoryImpl(get(), LoginSyncClient()) }
         },
     )
