@@ -48,6 +48,7 @@ import com.maxrave.domain.manager.DataStoreManager
 import com.maxrave.domain.manager.DataStoreManager.Values.FALSE
 import com.maxrave.domain.manager.DataStoreManager.Values.TRUE
 import com.maxrave.domain.mediaservice.handler.ControlState
+import com.maxrave.domain.mediaservice.handler.LaunchRestoreGate
 import com.maxrave.domain.mediaservice.handler.MediaPlayerHandler
 import com.maxrave.domain.mediaservice.handler.NowPlayingTrackState
 import com.maxrave.domain.mediaservice.handler.PlayerEvent
@@ -1146,12 +1147,12 @@ class JvmMediaPlayerHandlerImpl(
 
             PlayerEvent.Next -> {
                 resetCrossfade()
-                player.seekToNext()
+                player.skipByUser(forward = true)
             }
 
             PlayerEvent.Previous -> {
                 resetCrossfade()
-                player.seekToPrevious()
+                player.skipByUser(forward = false)
             }
 
             PlayerEvent.SkipToPrevious -> {
@@ -2575,7 +2576,11 @@ class JvmMediaPlayerHandlerImpl(
     }
 
     override fun mayBeRestoreQueue() {
-        coroutineScope.launch { restoreSavedQueue(playWhenReady = false) }
+        coroutineScope.launch {
+            // Fork: playback sync may first write another phone's newer queue where this reads.
+            LaunchRestoreGate.await()
+            restoreSavedQueue(playWhenReady = false)
+        }
     }
 
     override suspend fun restoreQueueAndPlay(): Boolean = restoreSavedQueue(playWhenReady = true)

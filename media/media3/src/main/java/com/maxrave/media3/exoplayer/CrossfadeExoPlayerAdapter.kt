@@ -454,9 +454,10 @@ internal class CrossfadeExoPlayerAdapter(
 
                 override fun hasPreviousMediaItem(): Boolean = this@CrossfadeExoPlayerAdapter.hasPreviousMediaItem()
 
-                override fun seekToNext(): Unit = this@CrossfadeExoPlayerAdapter.seekToNext()
+                // Fork: system controls (notification, lock screen, headset, car) are the user's skips.
+                override fun seekToNext(): Unit = this@CrossfadeExoPlayerAdapter.skipByUser(forward = true)
 
-                override fun seekToPrevious(): Unit = this@CrossfadeExoPlayerAdapter.seekToPrevious()
+                override fun seekToPrevious(): Unit = this@CrossfadeExoPlayerAdapter.skipByUser(forward = false)
 
                 override fun seekToPreviousMediaItem(): Unit = this@CrossfadeExoPlayerAdapter.seekToPreviousMediaItem()
 
@@ -867,6 +868,32 @@ internal class CrossfadeExoPlayerAdapter(
             } else {
                 Logger.d(TAG, "seekToPrevious: No previous item, seeking to start")
                 seekTo(0)
+            }
+        }
+    }
+
+    override fun skipByUser(forward: Boolean) {
+        if (internalPlayWhenReady) {
+            if (forward) seekToNext() else seekToPrevious()
+            return
+        }
+        // Paused, so no crossfade to commit. The target is picked as seekToNext/seekToPrevious would.
+        coroutineScope.launch {
+            val target =
+                when {
+                    forward -> if (hasNextMediaItem()) getNextMediaItemIndex() else return@launch
+                    currentPosition > 3000L && !isCurrentTrackLive() -> null
+                    hasPreviousMediaItem() -> getPreviousMediaItemIndex()
+                    else -> null
+                }
+            if (target == null) {
+                // Previous restarts this track: play it from the top.
+                seekTo(0)
+                play()
+            } else {
+                // Recorded before the load starts, which reads it to decide whether to play.
+                internalPlayWhenReady = true
+                seekTo(target, 0)
             }
         }
     }
@@ -1738,11 +1765,10 @@ internal class CrossfadeExoPlayerAdapter(
                     player.playbackParameters = PlaybackParameters(internalPlaybackSpeed, internalPlaybackPitch)
                     player.skipSilenceEnabled = internalSkipSilence
 
-                    // Seek if needed
-                    if (startPositionMs > 0) {
-                        player.seekTo(startPositionMs)
-                        cachedPosition = startPositionMs
-                    }
+                    // Seek if needed. The position is reset even at 0: left alone, a track loaded
+                    // while paused reported the previous track's position until playback started.
+                    if (startPositionMs > 0) player.seekTo(startPositionMs)
+                    cachedPosition = startPositionMs
 
                     // Auto-play if requested
                     if (shouldPlay) {

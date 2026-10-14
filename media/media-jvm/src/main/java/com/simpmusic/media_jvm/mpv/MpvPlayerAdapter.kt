@@ -522,6 +522,32 @@ class MpvPlayerAdapter(
         }
     }
 
+    override fun skipByUser(forward: Boolean) {
+        if (internalPlayWhenReady) {
+            if (forward) seekToNext() else seekToPrevious()
+            return
+        }
+        // Paused, so no crossfade to commit. The target is picked as seekToNext/seekToPrevious would.
+        coroutineScope.launch {
+            val target =
+                when {
+                    forward -> if (hasNextMediaItem()) getNextMediaItemIndex() else return@launch
+                    cachedPosition > 3000L && !isCurrentTrackLive() -> null
+                    hasPreviousMediaItem() -> getPreviousMediaItemIndex()
+                    else -> null
+                }
+            if (target == null) {
+                // Previous restarts this track: play it from the top.
+                seekTo(0)
+                play()
+            } else {
+                // Recorded before the load starts, which reads it to decide whether to play.
+                internalPlayWhenReady = true
+                seekTo(target, 0)
+            }
+        }
+    }
+
     override fun seekToPreviousMediaItem() {
         coroutineScope.launch {
             // Mirror seekToPrevious(): commit the incoming track (A+1) as current first, so

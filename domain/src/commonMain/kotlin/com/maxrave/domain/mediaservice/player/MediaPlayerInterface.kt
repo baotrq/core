@@ -34,6 +34,16 @@ interface MediaPlayerInterface {
     fun seekToPrevious()
 
     /**
+     * Fork: Next ([forward]) or Previous as pressed by the user, which also starts playback when
+     * paused, the way YouTube Music and Spotify skip. [seekToNext]/[seekToPrevious] keep the current
+     * play state, and must: the player calls them itself (track end, explicit and SponsorBlock skips),
+     * and a paused queue restored at launch must not start playing on its own.
+     */
+    fun skipByUser(forward: Boolean) {
+        if (forward) seekToNext() else seekToPrevious()
+    }
+
+    /**
      * Always advances to the previous media item, regardless of the current playback
      * position. This is the version used by UI affordances that should NOT exhibit
      * the "tap once to restart, tap again to go back" behaviour of [seekToPrevious]
