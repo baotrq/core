@@ -181,19 +181,9 @@ internal class LyricsCanvasRepositoryImpl(
                                 Logger.d("Canvas", "Spotify search: ${searchResponse.data?.searchV2?.tracksV2?.items?.size ?: 0} tracks")
                                 val track =
                                     if (duration != 0) {
-                                        searchResponse.data?.searchV2?.tracksV2?.items?.find {
-                                            abs(
-                                                (
-                                                    (
-                                                        (
-                                                            it.item
-                                                                ?.data
-                                                                ?.duration
-                                                                ?.totalMilliseconds ?: (0 / 1000)
-                                                        ) - duration
-                                                    )
-                                                ),
-                                            ) < 1
+                                        // totalMilliseconds is in ms and duration in seconds.
+                                        searchResponse.data?.searchV2?.tracksV2?.items?.find { item ->
+                                            item.item?.data?.duration?.totalMilliseconds?.let { abs(it / 1000 - duration) <= 5 } == true
                                         }
                                             ?: searchResponse.data
                                                 ?.searchV2
@@ -456,40 +446,27 @@ internal class LyricsCanvasRepositoryImpl(
                     spotify
                         .searchSpotifyTrack(q, authToken, spotifyClientToken)
                         .onSuccess { searchResponse ->
-                            val track =
-                                if (duration != 0 && duration != null) {
-                                    searchResponse.data?.searchV2?.tracksV2?.items?.find {
-                                        abs(
-                                            (
-                                                (
-                                                    (
-                                                        it.item
-                                                            ?.data
-                                                            ?.duration
-                                                            ?.totalMilliseconds ?: (0 / 1000)
-                                                    ) - duration
-                                                )
-                                            ),
-                                        ) < 1
+                            val items = searchResponse.data?.searchV2?.tracksV2?.items
+                            // A hit whose length differs is usually another version of the song (a
+                            // remix, the original of a sped-up edit): its words are still likely
+                            // right, its timing is not. So it is kept, but as plain lyrics, which
+                            // the lookup only falls back to when no source has a timed match.
+                            val lengthMatch =
+                                if (duration != null && duration != 0) {
+                                    items?.find { item ->
+                                        item.item?.data?.duration?.totalMilliseconds?.let { abs(it / 1000 - duration) <= 5 } == true
                                     }
-                                        ?: searchResponse.data
-                                            ?.searchV2
-                                            ?.tracksV2
-                                            ?.items
-                                            ?.firstOrNull()
                                 } else {
-                                    searchResponse.data
-                                        ?.searchV2
-                                        ?.tracksV2
-                                        ?.items
-                                        ?.firstOrNull()
+                                    items?.firstOrNull()
                                 }
+                            val track = lengthMatch ?: items?.firstOrNull()
                             Logger.d("Lyrics", "track: $track")
                             if (track != null) {
                                 spotify
                                     .getSpotifyLyrics(track.item?.data?.id ?: "", spotifyPersonalToken, spotifyClientToken)
                                     .onSuccess {
-                                        emit(Resource.Success<Lyrics>(it.toLyrics()))
+                                        val lyrics = it.toLyrics()
+                                        emit(Resource.Success<Lyrics>(if (lengthMatch == null) lyrics.copy(syncType = "UNSYNCED") else lyrics))
                                     }.onFailure {
                                         it.printStackTrace()
                                         emit(Resource.Error<Lyrics>("Not found"))
