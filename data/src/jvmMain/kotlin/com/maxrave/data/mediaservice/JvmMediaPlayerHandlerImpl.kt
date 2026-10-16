@@ -236,6 +236,9 @@ class JvmMediaPlayerHandlerImpl(
      * and all three actuals for one dependency.
      */
     private val lastfmScrobbler = LastfmScrobbler(dataStoreManager)
+
+    // Fork: with AutoMix on, a radio plays the best tempo/key fit among its next few tracks next.
+    private val autoMixQueueOrder = AutoMixQueueOrder(dataStoreManager, streamRepository, getKoin().get(), coroutineScope)
     override var onUpdateNotification: (List<GenericCommandButton>) -> Unit = {}
     override var showToast: (ToastType) -> Unit = {}
     override var pushPlayerError: (PlayerError) -> Unit = {}
@@ -2855,6 +2858,7 @@ class JvmMediaPlayerHandlerImpl(
         if (player.currentMediaItemIndex == 0) {
             resetCrossfade()
         }
+        autoMixQueueOrder.onTrackChanged(this)
         mayBeSaveRecentSong()
     }
 
