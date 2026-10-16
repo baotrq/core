@@ -7,7 +7,6 @@ import com.maxrave.common.VIDEO_QUALITY
 import com.maxrave.data.db.datasource.LocalDataSource
 import com.maxrave.data.mapping.toSponsorSkipSegments
 import com.maxrave.data.mapping.toTrack
-import com.maxrave.data.mediaservice.tidalSearchQuery
 import com.maxrave.domain.data.entities.NewFormatEntity
 import com.maxrave.domain.data.model.browse.album.Track
 import com.maxrave.domain.data.model.mediaService.SponsorSkipSegments
@@ -197,7 +196,18 @@ internal class StreamRepositoryImpl(
                     if (!isVideo && durationSecond != null && data.third == MediaType.Song) {
                         val title = response.videoDetails?.title ?: ""
                         val author = response.videoDetails?.author ?: ""
-                        val q = tidalSearchQuery(title, author)
+                        val q =
+                            "$title $author"
+                                .replace(
+                                    Regex("\\((feat\\.|ft.|cùng với|con|mukana|com|avec|合作音乐人: ) "),
+                                    " ",
+                                ).replace(
+                                    Regex("( và | & | и | e | und |, |和| dan)"),
+                                    " ",
+                                ).replace("  ", " ")
+                                .replace(Regex("([()])"), "")
+                                .replace(".", " ")
+                                .replace("  ", " ")
                         Logger.d("Stream", "Search Tidal metadata for: $q")
                         youTube
                             .searchTidalMetadata(q, durationSecond)
