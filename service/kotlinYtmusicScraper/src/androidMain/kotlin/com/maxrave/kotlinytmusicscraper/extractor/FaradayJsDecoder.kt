@@ -58,7 +58,7 @@ internal class FaradayJsDecoder : YoutubeJavaScriptDecoder {
             .newSingleThreadExecutor { runnable -> Thread(null, runnable, "QuickJs", JS_THREAD_STACK_BYTES) }
             .asCoroutineDispatcher()
 
-    private val engine by lazy { FaradayCipherEngine(HttpClient(getEngine()), jsThread, bridgedLogger) }
+    private val engine by lazy { FaradayCipherEngine(HttpClient(getEngine()), jsThread, bridgedLogger, FileCipherDiskCache()) }
 
     override fun getPlayerData(videoId: String): YoutubeJavaScriptDecoder.PlayerData {
         val info =

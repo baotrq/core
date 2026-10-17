@@ -455,6 +455,15 @@ interface DataStoreManager {
     suspend fun setCrossfadeSkipAlbum(enabled: Boolean)
 
     /**
+     * Fork: Car mode, for a phone that lives in the car on mobile data and spare storage. On, the
+     * app trades data and storage for speed: preloaded songs buffer to the end, covers are kept
+     * for 30 days, and launch does not wait for playback sync. Per device: not part of Settings sync.
+     */
+    val carMode: Flow<String>
+
+    suspend fun setCarMode(enabled: Boolean)
+
+    /**
      * When on, liking a song also queues it for offline download, at the existing download quality.
      *
      * Off by default — it spends storage and data without the user asking each time. Only applies

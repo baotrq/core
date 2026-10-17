@@ -98,6 +98,9 @@ interface SongRepository {
 
     fun getMostPlayedSongs(): Flow<List<SongEntity>>
 
+    /** The [limit] most played songs, most played first. */
+    suspend fun getTopPlayedSongs(limit: Int): List<SongEntity>
+
     suspend fun updateDownloadState(
         videoId: String,
         downloadState: Int,

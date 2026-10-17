@@ -21,6 +21,13 @@ object Logger {
 
     private fun isMuted(tag: String): Boolean = tag in mutedTags
 
+    /**
+     * Whether [d] reaches Logcat/console at all. The Android app turns it off in release builds:
+     * Debug never reaches the log files anyway, and some debug lines (a curl command per request)
+     * cost real work to build. Checked by such callers too, so they can skip building the line.
+     */
+    var debugEnabled: Boolean = true
+
     const val APP_LOG = "app"
     const val ERROR_LOG = "error"
     private const val APP_LOG_FILES = 3
@@ -66,7 +73,7 @@ object Logger {
         tag: String,
         message: String,
     ) {
-        if (isMuted(tag)) return
+        if (!debugEnabled || isMuted(tag)) return
         logger.d(
             tag = tag,
             message = {

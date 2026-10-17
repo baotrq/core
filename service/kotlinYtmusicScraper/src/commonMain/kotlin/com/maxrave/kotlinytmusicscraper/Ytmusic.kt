@@ -35,13 +35,11 @@ import io.ktor.client.HttpClient
 import io.ktor.client.engine.ProxyConfig
 import io.ktor.client.plugins.ClientRequestException
 import io.ktor.client.plugins.HttpRedirect
+import io.ktor.client.plugins.HttpRequestRetry
 import io.ktor.client.plugins.HttpResponseValidator
 import io.ktor.client.plugins.compression.ContentEncoding
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.defaultRequest
-import io.ktor.client.plugins.logging.DEFAULT
-import io.ktor.client.plugins.logging.LogLevel
-import io.ktor.client.plugins.logging.Logging
 import io.ktor.client.request.HttpRequestBuilder
 import io.ktor.client.request.accept
 import io.ktor.client.request.get
@@ -169,6 +167,15 @@ class Ytmusic {
             expectSuccess = true
             install(CurlLogger) {
                 logger = { Logger.d(TAG, it) }
+                enabled = { Logger.debugEnabled }
+            }
+            // Twice more, a second apart, but only when YouTube was not reached at all: a connection
+            // that dropped or is not up yet (right after boot), or a timeout. An answer, even an
+            // error status, is final — the callers have fallbacks of their own for those.
+            install(HttpRequestRetry) {
+                retryIf(maxRetries = 2) { _, _ -> false }
+                retryOnExceptionIf(maxRetries = 2) { _, cause -> cause is IOException }
+                delayMillis { retry -> retry * 1_000L }
             }
             // Every rejected sign-in on this client lands in the app log in one place. Host and path
             // only: the query and headers carry the cookie and the account.
@@ -185,10 +192,6 @@ class Ytmusic {
             install(HttpRedirect) {
                 checkHttpMethod = false
                 allowHttpsDowngrade = true
-            }
-            install(Logging) {
-                logger = io.ktor.client.plugins.logging.Logger.DEFAULT
-                level = LogLevel.ALL
             }
             install(ContentNegotiation) {
                 protobuf()

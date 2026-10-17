@@ -92,7 +92,8 @@ internal class StreamRepositoryImpl(
     ): Flow<String?> =
         flow {
             val itag =
-                if (isDownloading) {
+                // Car mode downloads at the streaming quality: its offline copies stand in for streams.
+                if (isDownloading && dataStoreManager.carMode.first() != DataStoreManager.TRUE) {
                     QUALITY.itagOf(dataStoreManager.downloadQuality.first())
                 } else {
                     QUALITY.itagOf(dataStoreManager.quality.first())

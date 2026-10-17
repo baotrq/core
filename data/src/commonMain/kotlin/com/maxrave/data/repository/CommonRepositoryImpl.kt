@@ -73,6 +73,7 @@ internal class CommonRepositoryImpl(
                                     "en"
                                 },
                             )
+                        YouTubeSession.applied(YouTubeSession.Part.LOCALE)
                     }
                 }
             val ytCookieJob =
@@ -80,11 +81,14 @@ internal class CommonRepositoryImpl(
                     dataStoreManager.cookie.distinctUntilChanged().collectLatest { cookie ->
                         if (cookie.isNotEmpty()) {
                             youTube.cookie = cookie
+                            // Before the visitorData request below, which is a network round trip.
+                            YouTubeSession.applied(YouTubeSession.Part.COOKIE)
                             youTube.visitorData()?.let {
                                 youTube.visitorData = it
                             }
                         } else {
                             youTube.cookie = null
+                            YouTubeSession.applied(YouTubeSession.Part.COOKIE)
                         }
                         Logger.d("YouTube", "New cookie")
                         localDataSource.getUsedGoogleAccount()?.netscapeCookie?.let {
@@ -97,6 +101,7 @@ internal class CommonRepositoryImpl(
                 launch {
                     dataStoreManager.pageId.distinctUntilChanged().collectLatest { pageId ->
                         youTube.pageId = pageId.ifEmpty { null }
+                        YouTubeSession.applied(YouTubeSession.Part.PAGE_ID)
                         Logger.d("YouTube", "New pageId")
                         localDataSource.getUsedGoogleAccount()?.netscapeCookie?.let {
                             writeTextToFile(it, cookiePath)
@@ -108,6 +113,7 @@ internal class CommonRepositoryImpl(
                 launch {
                     dataStoreManager.authUser.distinctUntilChanged().collectLatest { authUser ->
                         youTube.authUser = authUser
+                        YouTubeSession.applied(YouTubeSession.Part.AUTH_USER)
                         Logger.d("YouTube", "New authUser")
                     }
                 }

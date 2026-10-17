@@ -67,6 +67,7 @@ internal class HomeRepositoryImpl(
         songString: String,
     ): Flow<Resource<Pair<String?, List<HomeItem>>>> =
         flow {
+            YouTubeSession.awaitApplied()
             runCatching {
                 val limit = dataStoreManager.homeLimit.first()
                 youTube
@@ -246,6 +247,7 @@ internal class HomeRepositoryImpl(
         musicVideoString: String,
     ): Flow<Resource<List<HomeItem>>> =
         flow {
+            YouTubeSession.awaitApplied()
             youTube
                 .newRelease()
                 .onSuccess { result ->
@@ -257,6 +259,7 @@ internal class HomeRepositoryImpl(
 
     override fun getChartData(countryCode: String): Flow<Resource<Chart>> =
         flow {
+            YouTubeSession.awaitApplied()
             runCatching {
                 youTube
                     .customQuery("FEmusic_charts", country = countryCode)
@@ -294,6 +297,7 @@ internal class HomeRepositoryImpl(
             if (cached != null) {
                 emit(Resource.Success<Mood>(cached))
             }
+            YouTubeSession.awaitApplied()
             runCatching {
                 youTube
                     .moodAndGenres()

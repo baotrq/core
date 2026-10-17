@@ -1484,6 +1484,19 @@ internal class DataStoreManagerImpl(
         }
     }
 
+    override val carMode: Flow<String> =
+        settingsDataStore.data.map { preferences ->
+            preferences[CAR_MODE] ?: FALSE
+        }
+
+    override suspend fun setCarMode(enabled: Boolean) {
+        withContext(Dispatchers.IO) {
+            settingsDataStore.edit { settings ->
+                settings[CAR_MODE] = if (enabled) TRUE else FALSE
+            }
+        }
+    }
+
     // Defaults to FALSE: it spends storage and mobile data on the user's behalf.
     override val autoDownloadLikedSongs: Flow<String> =
         settingsDataStore.data.map { preferences ->
@@ -1812,6 +1825,7 @@ internal class DataStoreManagerImpl(
         val CROSSFADE_DURATION = intPreferencesKey("crossfade_duration")
         val CROSSFADE_DJ_MODE = stringPreferencesKey("crossfade_dj_mode")
         val CROSSFADE_SKIP_ALBUM = stringPreferencesKey("crossfade_skip_album")
+        val CAR_MODE = stringPreferencesKey("car_mode")
         val AUTO_DOWNLOAD_LIKED_SONGS = stringPreferencesKey("auto_download_liked_songs")
         val LYRICS_PROVIDER = stringPreferencesKey("lyrics_provider")
         val TRANSLATION_LANGUAGE = stringPreferencesKey("translation_language")

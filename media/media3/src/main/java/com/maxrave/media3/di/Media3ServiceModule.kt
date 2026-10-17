@@ -543,7 +543,8 @@ private fun provideHttpDataSourceFactory(
                 ).addInterceptor(
                     HttpLoggingInterceptor()
                         .apply {
-                            level = HttpLoggingInterceptor.Level.HEADERS
+                            // Every audio chunk is a request; release builds do not print them.
+                            level = if (Logger.debugEnabled) HttpLoggingInterceptor.Level.HEADERS else HttpLoggingInterceptor.Level.NONE
                         },
                 ).build(),
         ),

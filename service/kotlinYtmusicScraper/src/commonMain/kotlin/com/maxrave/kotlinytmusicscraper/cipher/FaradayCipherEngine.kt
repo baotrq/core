@@ -32,6 +32,8 @@ class FaradayCipherEngine(
      */
     private val jsThread: CoroutineDispatcher,
     private val logger: InnerTubeLogger = InnerTubeLogger.NONE,
+    /** Keeps the player script and table across app starts; null keeps them in memory only. */
+    private val diskCache: CipherDiskCache? = null,
 ) {
     /** What PipePipe needs before it can ask for anything to be decoded. */
     data class PlayerInfo(
@@ -44,7 +46,9 @@ class FaradayCipherEngine(
         val nParameters: Map<String, String>,
     )
 
-    private val repository = InMemoryPlayerConfigRepository(PLAYER_CONFIG_URL)
+    private val repository =
+        diskCache?.let { DiskPlayerConfigRepository(PLAYER_CONFIG_URL, it) }
+            ?: InMemoryPlayerConfigRepository(PLAYER_CONFIG_URL)
     private val store = RemotePlayerConfigStore(httpClient, repository, logger)
 
     /**
@@ -198,8 +202,14 @@ class FaradayCipherEngine(
                 ?.let { return it.solver }
         }
 
+        // The script for a given player id never changes, so a copy from an earlier launch is as good
+        // as a fresh one and saves a download of several MB before the first song can start.
+        val cachedCode = diskCache?.read(scriptFileName(playerId))
         return try {
-            val playerCode = downloadPlayerCode(playerUrl) ?: return null
+            val playerCode =
+                cachedCode
+                    ?: downloadPlayerCode(playerUrl)?.also { storePlayerCode(playerId, it) }
+                    ?: return null
             val created = ZemerCipherSolver.create(playerCode, config, jsThread)
             val replaced =
                 mutex.withLock {
@@ -212,6 +222,8 @@ class FaradayCipherEngine(
         } catch (error: CancellationException) {
             throw error
         } catch (error: Exception) {
+            // A damaged copy on disk would fail the same way every launch; the next try downloads.
+            if (cachedCode != null) diskCache?.delete(scriptFileName(playerId))
             logger.w(
                 TAG,
                 "solver build failed",
@@ -220,6 +232,19 @@ class FaradayCipherEngine(
             null
         }
     }
+
+    /** Keeps only this player's script: YouTube moves to a new player every few days. */
+    private fun storePlayerCode(
+        playerId: String,
+        code: String,
+    ) {
+        val cache = diskCache ?: return
+        val name = scriptFileName(playerId)
+        cache.names().filter { it.startsWith(SCRIPT_FILE_PREFIX) && it != name }.forEach(cache::delete)
+        cache.write(name, code)
+    }
+
+    private fun scriptFileName(playerId: String) = "$SCRIPT_FILE_PREFIX$playerId.js"
 
     private suspend fun downloadPlayerCode(playerUrl: String): String? =
         try {
@@ -260,6 +285,7 @@ class FaradayCipherEngine(
         private const val MAX_IFRAME_BYTES = 512 * 1024
         private const val MAX_PLAYER_SCRIPT_BYTES = 8 * 1024 * 1024
         private const val PLAYER_ID_TTL_MS = 30 * 60 * 1000L
+        private const val SCRIPT_FILE_PREFIX = "player-"
 
         private val PLAYER_HASH_REGEX = Regex("""player\\?/([a-z0-9]{8})\\?/""")
         private val PLAYER_ID_REGEX = Regex("^[A-Za-z0-9_-]{4,32}$")

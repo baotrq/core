@@ -49,6 +49,7 @@ class SimpMusicLyrics {
             install(HttpCache)
             install(CurlLogger) {
                 logger = { Logger.d("SimpMusicLyrics", it) }
+                enabled = { Logger.debugEnabled }
             }
             install(HttpSend) {
                 maxSendCount = 100

@@ -41,6 +41,7 @@ class ApiService {
         }
         install(CurlLogger) {
             logger = { Logger.d("KizzyApi", it) }
+            enabled = { Logger.debugEnabled }
         }
         install(HttpTimeout) {
             connectTimeoutMillis = 30_000

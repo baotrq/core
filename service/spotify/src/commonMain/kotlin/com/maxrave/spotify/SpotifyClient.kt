@@ -3,6 +3,7 @@ package com.maxrave.spotify
 import com.maxrave.ktorext.curl.CurlLogger
 import com.maxrave.ktorext.encoding.brotli
 import com.maxrave.ktorext.getEngine
+import com.maxrave.logger.Logger
 import com.maxrave.spotify.model.body.CanvasBody
 import com.maxrave.spotify.model.body.SpotifyClientBody
 import io.ktor.client.HttpClient
@@ -15,10 +16,6 @@ import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.cookies.AcceptAllCookiesStorage
 import io.ktor.client.plugins.cookies.HttpCookies
 import io.ktor.client.plugins.defaultRequest
-import io.ktor.client.plugins.logging.DEFAULT
-import io.ktor.client.plugins.logging.LogLevel
-import io.ktor.client.plugins.logging.Logger
-import io.ktor.client.plugins.logging.Logging
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.headers
@@ -60,22 +57,19 @@ class SpotifyClient {
             followRedirects = true
             expectSuccess = false
             // Every rejected Spotify token lands in the app log in one place. Host and path only: the
-            // headers carry the tokens. Ktor's own Logger is imported here, hence the full name.
+            // headers carry the tokens.
             HttpResponseValidator {
                 validateResponse { response ->
                     if (response.status == HttpStatusCode.Unauthorized || response.status == HttpStatusCode.Forbidden) {
                         val url = response.request.url
-                        com.maxrave.logger.Logger.w("Auth", "Spotify: ${url.host}${url.encodedPath} answered ${response.status.value}")
+                        Logger.w("Auth", "Spotify: ${url.host}${url.encodedPath} answered ${response.status.value}")
                     }
                 }
             }
             install(HttpCache)
-            install(Logging) {
-                logger = Logger.DEFAULT
-                level = LogLevel.ALL
-            }
             install(CurlLogger) {
-                logger = { Logger.DEFAULT.log(it) }
+                logger = { Logger.d("SpotifyClient", it) }
+                enabled = { Logger.debugEnabled }
             }
             install(HttpSend) {
                 maxSendCount = 100

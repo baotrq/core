@@ -255,6 +255,8 @@ internal class LocalDataSource(
 
     fun getMostPlayedSongs() = databaseDao.getMostPlayedSongs()
 
+    suspend fun getTopPlayedSongs(limit: Int) = databaseDao.getTopPlayedSongs(limit)
+
     fun countLikedSongs() = databaseDao.countLikedSongs()
 
     fun getLikedSongThumbnails(limit: Int) = databaseDao.getLikedSongThumbnails(limit)

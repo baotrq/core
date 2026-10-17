@@ -284,6 +284,9 @@ internal class SongRepositoryImpl(
 
     override fun getMostPlayedSongs(): Flow<List<SongEntity>> = localDataSource.getMostPlayedSongs()
 
+    override suspend fun getTopPlayedSongs(limit: Int): List<SongEntity> =
+        withContext(Dispatchers.IO) { localDataSource.getTopPlayedSongs(limit) }
+
     override suspend fun updateDownloadState(
         videoId: String,
         downloadState: Int,

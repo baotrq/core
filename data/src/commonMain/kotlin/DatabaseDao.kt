@@ -386,6 +386,10 @@ interface DatabaseDao {
     @Query("SELECT * FROM song WHERE totalPlayTime > 1 ORDER BY totalPlayTime DESC LIMIT 50")
     fun getMostPlayedSongs(): Flow<List<SongEntity>>
 
+    /** Car mode's offline set: the [limit] most played, same order as [getMostPlayedSongs]. */
+    @Query("SELECT * FROM song WHERE totalPlayTime > 1 ORDER BY totalPlayTime DESC LIMIT :limit")
+    suspend fun getTopPlayedSongs(limit: Int): List<SongEntity>
+
     // Your library cards: a count and the newest artwork per collection, as Flows so a like, a
     // follow or a finished download shows on the card straight away.
     @Query("SELECT COUNT(*) FROM song WHERE liked = 1")

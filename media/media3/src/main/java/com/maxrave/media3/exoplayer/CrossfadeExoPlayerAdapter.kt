@@ -138,7 +138,21 @@ internal class CrossfadeExoPlayerAdapter(
                 Logger.d(TAG, "Skip crossfade inside album: $skipCrossfadeInAlbum")
             }
         }
+        coroutineScope.launch {
+            dataStoreManager.carMode.collect { enabled ->
+                carMode = (enabled == DataStoreManager.TRUE)
+                Logger.d(TAG, "Car mode: $carMode")
+            }
+        }
     }
+
+    /**
+     * Fork: Car mode. Players built while it is on buffer the whole song instead of 200 s of it, so
+     * a precached next track is downloaded to the end (and lands in the player cache, playable
+     * offline afterwards). Read when a player is created; ones already built keep their setting.
+     */
+    @Volatile
+    private var carMode = false
 
     // ========== State Management ==========
 
@@ -611,16 +625,8 @@ internal class CrossfadeExoPlayerAdapter(
             ExoPlayer
                 .Builder(context)
                 .setAudioAttributes(audioAttributes, false)
-                .setLoadControl(
-                    DefaultLoadControl
-                        .Builder()
-                        .setBufferDurationsMs(
-                            DefaultLoadControl.DEFAULT_MIN_BUFFER_MS * 4,
-                            DefaultLoadControl.DEFAULT_MAX_BUFFER_MS * 4,
-                            0,
-                            0,
-                        ).build(),
-                ).setWakeMode(C.WAKE_MODE_NETWORK)
+                .setLoadControl(if (carMode) carModeLoadControl() else defaultLoadControl())
+                .setWakeMode(C.WAKE_MODE_NETWORK)
                 .setHandleAudioBecomingNoisy(true)
                 .setSeekForwardIncrementMs(5000)
                 .setSeekBackIncrementMs(5000)
@@ -634,6 +640,28 @@ internal class CrossfadeExoPlayerAdapter(
 
         return PlayerWithFilter(player, crossfadeFilter)
     }
+
+    private fun defaultLoadControl() =
+        DefaultLoadControl
+            .Builder()
+            .setBufferDurationsMs(
+                DefaultLoadControl.DEFAULT_MIN_BUFFER_MS * 4,
+                DefaultLoadControl.DEFAULT_MAX_BUFFER_MS * 4,
+                0,
+                0,
+            ).build()
+
+    /**
+     * Twenty minutes ahead and 48 MB of room: the whole of any normal song even at 256 kbps (a
+     * ten-minute track is about 19 MB), where the default audio budget of ~13 MB stopped at about
+     * seven minutes. Memory is the cost — up to three players hold a song each.
+     */
+    private fun carModeLoadControl() =
+        DefaultLoadControl
+            .Builder()
+            .setBufferDurationsMs(CAR_MODE_BUFFER_MS, CAR_MODE_BUFFER_MS, 0, 0)
+            .setTargetBufferBytes(CAR_MODE_BUFFER_BYTES)
+            .build()
 
     // ========== Playback Control ==========
 
@@ -2913,6 +2941,9 @@ internal class CrossfadeExoPlayerAdapter(
     }
 
     companion object {
+        private const val CAR_MODE_BUFFER_MS = 20 * 60 * 1000
+        private const val CAR_MODE_BUFFER_BYTES = 48 * 1024 * 1024
+
         /** Floor for the shortest track worth crossfading, in ms. */
         private const val MIN_CROSSFADE_TRACK_MS = 20_000L
 

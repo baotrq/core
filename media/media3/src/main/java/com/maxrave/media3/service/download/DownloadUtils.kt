@@ -267,24 +267,36 @@ internal class DownloadUtils(
 
     init {
         coroutineScope.launch {
+            // What was last written per song: every change to any download re-emits the whole map,
+            // and writing every song's state each time flooded the database (thousands of writes a
+            // minute once many songs are downloaded). Only songs whose state moved are written now.
+            val written = mutableMapOf<String, Int>()
             downloads.collect { download ->
                 download.forEach {
                     val videoId = it.key
                     val audio = it.value.first?.state
                     val video = it.value.second?.state
                     val combineState =
-                        when (audio to video) {
-                            Download.STATE_COMPLETED to Download.STATE_COMPLETED -> DownloadState.STATE_DOWNLOADED
-                            Download.STATE_FAILED to Download.STATE_FAILED -> DownloadState.STATE_NOT_DOWNLOADED
-                            Download.STATE_QUEUED to Download.STATE_QUEUED -> DownloadState.STATE_PREPARING
-                            Download.STATE_COMPLETED to null -> DownloadState.STATE_DOWNLOADED
-                            Download.STATE_FAILED to null -> DownloadState.STATE_NOT_DOWNLOADED
-                            Download.STATE_QUEUED to null -> DownloadState.STATE_PREPARING
-                            null to Download.STATE_COMPLETED -> DownloadState.STATE_DOWNLOADING
-                            null to Download.STATE_QUEUED -> DownloadState.STATE_PREPARING
-                            null to Download.STATE_FAILED -> DownloadState.STATE_NOT_DOWNLOADED
-                            else -> DownloadState.STATE_DOWNLOADING
+                        // Being deleted: it used to fall through to "downloading" below, so a song
+                        // whose download was removed showed as downloading for good.
+                        if (audio == Download.STATE_REMOVING || video == Download.STATE_REMOVING) {
+                            DownloadState.STATE_NOT_DOWNLOADED
+                        } else {
+                            when (audio to video) {
+                                Download.STATE_COMPLETED to Download.STATE_COMPLETED -> DownloadState.STATE_DOWNLOADED
+                                Download.STATE_FAILED to Download.STATE_FAILED -> DownloadState.STATE_NOT_DOWNLOADED
+                                Download.STATE_QUEUED to Download.STATE_QUEUED -> DownloadState.STATE_PREPARING
+                                Download.STATE_COMPLETED to null -> DownloadState.STATE_DOWNLOADED
+                                Download.STATE_FAILED to null -> DownloadState.STATE_NOT_DOWNLOADED
+                                Download.STATE_QUEUED to null -> DownloadState.STATE_PREPARING
+                                null to Download.STATE_COMPLETED -> DownloadState.STATE_DOWNLOADING
+                                null to Download.STATE_QUEUED -> DownloadState.STATE_PREPARING
+                                null to Download.STATE_FAILED -> DownloadState.STATE_NOT_DOWNLOADED
+                                else -> DownloadState.STATE_DOWNLOADING
+                            }
                         }
+                    if (written[videoId] == combineState) return@forEach
+                    written[videoId] = combineState
                     _downloadTask.update {
                         it.toMutableMap().apply {
                             set(videoId, combineState)
@@ -392,6 +404,26 @@ internal class DownloadUtils(
                             else -> {
                             }
                         }
+                    }
+                }
+
+                // Media3 reports the end of a removal here, not in onDownloadChanged.
+                override fun onDownloadRemoved(
+                    downloadManager: DownloadManager,
+                    download: Download,
+                ) {
+                    val id = download.request.id
+                    val isVideo = id.contains(MERGING_DATA_TYPE.VIDEO)
+                    val songId = id.removePrefix(MERGING_DATA_TYPE.VIDEO)
+                    _downloads.update { map ->
+                        val current = map[songId] ?: return@update map
+                        val rest = if (isVideo) current.copy(second = null) else current.copy(first = null)
+                        if (rest.first == null && rest.second == null) map - songId else map + (songId to rest)
+                    }
+                    _downloadTask.update { it + (songId to DownloadState.STATE_NOT_DOWNLOADED) }
+                    coroutineScope.launch {
+                        downloadingVideoIds.update { it.apply { remove(songId) } }
+                        songRepository.updateDownloadState(songId, DownloadState.STATE_NOT_DOWNLOADED)
                     }
                 }
             },

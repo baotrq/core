@@ -23,6 +23,12 @@ class CurlLoggerConfig {
     var logger: (String) -> Unit = { println(it) }
 
     /**
+     * Asked before each request. Building the command copies the request body, so a sink that
+     * would drop the line anyway (release builds) should say so here and skip the work.
+     */
+    var enabled: () -> Boolean = { true }
+
+    /**
      * Header names (case-insensitive) whose value is replaced with `<redacted>`.
      * Empty by default so the printed command stays copy-paste runnable.
      * Set e.g. `setOf("Authorization", "Cookie")` to avoid leaking secrets to logs.
@@ -54,10 +60,12 @@ class CurlLoggerConfig {
  */
 val CurlLogger = createClientPlugin("CurlLogger", ::CurlLoggerConfig) {
     val log = pluginConfig.logger
+    val enabled = pluginConfig.enabled
     val redactHeaders = pluginConfig.redactHeaders.mapTo(mutableSetOf()) { it.lowercase() }
     val handleCompression = pluginConfig.handleCompression
 
     on(SendingRequest) { request, content ->
+        if (!enabled()) return@on
         try {
             log(buildCurlCommand(request, content, redactHeaders, handleCompression))
         } catch (e: CancellationException) {
