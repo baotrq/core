@@ -122,6 +122,11 @@ interface SongRepository {
         downloadState: Int,
     )
 
+    suspend fun getRecentSong(
+        limit: Int,
+        offset: Int,
+    ): List<SongEntity>
+
     suspend fun insertSongInfo(songInfo: SongInfoEntity)
 
     suspend fun getSongInfoEntity(videoId: String): Flow<SongInfoEntity?>
