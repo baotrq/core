@@ -2,6 +2,10 @@ package com.maxrave.data.mapping
 
 import com.maxrave.data.parser.toListThumbnail
 import com.maxrave.domain.data.model.browse.album.Track
+import com.maxrave.domain.data.model.comments.CommentLikeState
+import com.maxrave.domain.data.model.comments.YouTubeComment
+import com.maxrave.domain.data.model.comments.YouTubeCommentsHeader
+import com.maxrave.domain.data.model.comments.YouTubeCommentsPage
 import com.maxrave.domain.data.model.canvas.CanvasResult
 import com.maxrave.domain.data.model.home.Content
 import com.maxrave.domain.data.model.mediaService.SponsorSkipSegments
@@ -16,6 +20,7 @@ import com.maxrave.domain.data.model.searchResult.songs.SongsResult
 import com.maxrave.domain.data.model.searchResult.songs.Thumbnail
 import com.maxrave.domain.data.model.searchResult.videos.VideosResult
 import com.maxrave.domain.data.model.streams.YouTubeWatchEndpoint
+import com.maxrave.domain.utils.LIVE_RESULT_TYPE
 import com.maxrave.kotlinytmusicscraper.models.AccountInfo
 import com.maxrave.kotlinytmusicscraper.models.AlbumItem
 import com.maxrave.kotlinytmusicscraper.models.ArtistItem
@@ -29,6 +34,8 @@ import com.maxrave.kotlinytmusicscraper.models.response.PipedResponse
 import com.maxrave.kotlinytmusicscraper.models.sponsorblock.SkipSegments
 import com.maxrave.kotlinytmusicscraper.models.youtube.Transcript
 import com.maxrave.kotlinytmusicscraper.models.youtube.YouTubeInitialPage
+import com.maxrave.kotlinytmusicscraper.pages.CommentItem
+import com.maxrave.kotlinytmusicscraper.pages.CommentsPage
 import com.maxrave.spotify.model.response.spotify.CanvasResponse
 import com.maxrave.spotify.model.response.spotify.SpotifyLyricsResponse
 import org.simpmusic.lyrics.models.response.LyricsResponse
@@ -53,7 +60,7 @@ internal fun SongItem.toTrack(): Track =
         videoType = this.musicVideoType,
         category = null,
         feedbackTokens = null,
-        resultType = null,
+        resultType = if (this.isLive) LIVE_RESULT_TYPE else null,
         year = null,
     )
 
@@ -72,7 +79,7 @@ internal fun VideoItem.toTrack(): Track =
         videoType = this.musicVideoType,
         category = null,
         feedbackTokens = null,
-        resultType = null,
+        resultType = if (this.isLive) LIVE_RESULT_TYPE else null,
         year = null,
     )
 
@@ -326,7 +333,7 @@ internal fun SearchSuggestions.toDomainSearchSuggestions(): com.maxrave.domain.d
                             durationSeconds = it.duration,
                             feedbackTokens = null,
                             isExplicit = it.explicit,
-                            resultType = "Song",
+                            resultType = if (it.isLive) LIVE_RESULT_TYPE else "Song",
                             thumbnails = it.thumbnails?.thumbnails?.toListThumbnail() ?: listOf(),
                             title = it.title,
                             videoId = it.id,
@@ -413,7 +420,7 @@ internal fun SearchSuggestions.toDomainSearchSuggestions(): com.maxrave.domain.d
                             category = null,
                             duration = it.duration?.toString(),
                             durationSeconds = it.duration,
-                            resultType = "VIDEO",
+                            resultType = if (it.isLive) LIVE_RESULT_TYPE else "VIDEO",
                             thumbnails = it.thumbnails?.thumbnails?.toListThumbnail() ?: listOf(),
                             title = it.title,
                             videoId = it.id,
@@ -530,6 +537,7 @@ internal fun YTItem.toHomeContent(): Content =
                 views = null,
                 durationSeconds = duration,
                 videoType = musicVideoType,
+                isLive = isLive,
             )
         }
 
@@ -547,6 +555,7 @@ internal fun YTItem.toHomeContent(): Content =
                 views = view,
                 durationSeconds = duration,
                 videoType = musicVideoType,
+                isLive = isLive,
             )
         }
 
@@ -595,3 +604,46 @@ internal fun YTItem.toHomeContent(): Content =
             )
         }
     }
+
+internal fun CommentItem.toYouTubeComment(): YouTubeComment =
+    YouTubeComment(
+        id = id,
+        author = author,
+        authorAvatar = authorAvatar,
+        authorChannelId = authorChannelId,
+        isVerified = isVerified,
+        isCreator = isCreator,
+        text = text,
+        publishedTime = publishedTime,
+        likeCount = likeCount,
+        likeCountLiked = likeCountLiked,
+        likeState = CommentLikeState.valueOf(likeState.name),
+        isHearted = isHearted,
+        isPinned = isPinned,
+        repliesLabel = repliesLabel,
+        repliesToken = repliesToken,
+        likeAction = likeAction,
+        unlikeAction = unlikeAction,
+        dislikeAction = dislikeAction,
+        undislikeAction = undislikeAction,
+        replyParams = replyParams,
+        replyPlaceholder = replyPlaceholder,
+    )
+
+internal fun CommentsPage.toYouTubeCommentsPage(): YouTubeCommentsPage =
+    YouTubeCommentsPage(
+        header =
+            header?.let {
+                YouTubeCommentsHeader(
+                    countText = it.countText,
+                    countShort = it.countShort,
+                    createParams = it.createParams,
+                    placeholder = it.placeholder,
+                    userAvatar = it.userAvatar,
+                )
+            },
+        comments = comments.map { it.toYouTubeComment() },
+        nextToken = nextToken,
+        nextLabel = nextLabel,
+    )
+

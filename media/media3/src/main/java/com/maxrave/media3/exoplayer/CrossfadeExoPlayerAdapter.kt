@@ -893,7 +893,7 @@ internal class CrossfadeExoPlayerAdapter(
                 Logger.d(TAG, "seekToPrevious: pos=${position}ms <= ${positionThresholdMs}ms — going to previous track")
                 val prevIndex = getPreviousMediaItemIndex()
                 seekTo(prevIndex, 0)
-            } else {
+            } else if (!isCurrentTrackLive()) {
                 Logger.d(TAG, "seekToPrevious: No previous item, seeking to start")
                 seekTo(0)
             }
@@ -946,6 +946,15 @@ internal class CrossfadeExoPlayerAdapter(
         }
     }
 
+    /**
+     * An empty playlist that gains an item points at it, as ExoPlayer's own does. clearMediaItems()
+     * leaves the index at -1 and nothing else moves it, so prepare() below loaded nothing and Add to
+     * queue with nothing loaded (fresh start, or after closing the mini player) never played.
+     */
+    private fun pointAtFirstItemIfUnset() {
+        if (localCurrentMediaItemIndex < 0 && playlist.isNotEmpty()) localCurrentMediaItemIndex = 0
+    }
+
     override fun prepare() {
         if (playlist.isNotEmpty() && localCurrentMediaItemIndex >= 0) {
             coroutineScope.launch {
@@ -978,6 +987,7 @@ internal class CrossfadeExoPlayerAdapter(
 
     override fun addMediaItem(mediaItem: GenericMediaItem) {
         playlist.add(mediaItem)
+        pointAtFirstItemIfUnset()
 
         if (internalShuffleModeEnabled) {
             insertAppendedIntoShuffleOrder()
@@ -1006,6 +1016,7 @@ internal class CrossfadeExoPlayerAdapter(
             if (index <= localCurrentMediaItemIndex) {
                 localCurrentMediaItemIndex++
             }
+            pointAtFirstItemIfUnset()
 
             // Update shuffle order if enabled
             if (internalShuffleModeEnabled) {
@@ -1317,9 +1328,10 @@ internal class CrossfadeExoPlayerAdapter(
 
     // ========== Navigation ==========
 
+    // Repeat One only loops a track that ends on its own (handleTrackEndInternal);
+    // Next and Previous move through the queue as they do with repeat off.
     override fun hasNextMediaItem(): Boolean =
         when (internalRepeatMode) {
-            PlayerConstants.REPEAT_MODE_ONE -> true
             PlayerConstants.REPEAT_MODE_ALL -> true
             else ->
                 if (internalShuffleModeEnabled && shuffleOrder.isNotEmpty()) {
@@ -1333,7 +1345,6 @@ internal class CrossfadeExoPlayerAdapter(
 
     override fun hasPreviousMediaItem(): Boolean =
         when (internalRepeatMode) {
-            PlayerConstants.REPEAT_MODE_ONE -> true
             PlayerConstants.REPEAT_MODE_ALL -> true
             else ->
                 if (internalShuffleModeEnabled && shuffleOrder.isNotEmpty()) {
@@ -1347,9 +1358,6 @@ internal class CrossfadeExoPlayerAdapter(
 
     private fun getNextMediaItemIndex(): Int =
         when (internalRepeatMode) {
-            PlayerConstants.REPEAT_MODE_ONE -> {
-                localCurrentMediaItemIndex
-            }
             PlayerConstants.REPEAT_MODE_ALL -> {
                 if (internalShuffleModeEnabled && shuffleOrder.isNotEmpty()) {
                     val currentShufflePos = shuffleIndices.getOrNull(localCurrentMediaItemIndex) ?: 0
@@ -1380,9 +1388,6 @@ internal class CrossfadeExoPlayerAdapter(
 
     private fun getPreviousMediaItemIndex(): Int =
         when (internalRepeatMode) {
-            PlayerConstants.REPEAT_MODE_ONE -> {
-                localCurrentMediaItemIndex
-            }
             PlayerConstants.REPEAT_MODE_ALL -> {
                 if (internalShuffleModeEnabled && shuffleOrder.isNotEmpty()) {
                     val currentShufflePos = shuffleIndices.getOrNull(localCurrentMediaItemIndex) ?: 0
@@ -1852,7 +1857,8 @@ internal class CrossfadeExoPlayerAdapter(
                     when (playbackState) {
                         Player.STATE_ENDED -> {
                             Logger.d(TAG, "End of stream reached")
-                            if (hasNextMediaItem()) {
+                            // Repeat One replays this track, so its end is not the end of playback.
+                            if (hasNextMediaItem() || internalRepeatMode == PlayerConstants.REPEAT_MODE_ONE) {
                                 forwardingPlayer.suppressPlaybackEnded = true
                                 transitionToState(InternalState.PREPARING)
                             } else {
@@ -2195,6 +2201,8 @@ internal class CrossfadeExoPlayerAdapter(
         val shouldCrossfade =
             crossfadeEnabled &&
                 !crossfadeSuppressed &&
+                // Repeat One loops this track through the branch below instead of fading into the next.
+                internalRepeatMode != PlayerConstants.REPEAT_MODE_ONE &&
                 hasNextMediaItem() &&
                 !isCrossfading &&
                 !isCurrentTrackVideo() &&
@@ -3077,6 +3085,7 @@ internal class CrossfadeExoPlayerAdapter(
                                 // eat into the audible crossfade window.
                                 if (crossfadeEnabled &&
                                     !crossfadeSuppressed &&
+                                    internalRepeatMode != PlayerConstants.REPEAT_MODE_ONE &&
                                     !isCrossfading &&
                                     player.isPlaying &&
                                     dur > 0 &&

@@ -41,6 +41,7 @@ import com.maxrave.kotlinytmusicscraper.models.response.AccountMenuResponse
 import com.maxrave.kotlinytmusicscraper.models.response.AccountSwitcherEndpointResponse
 import com.maxrave.kotlinytmusicscraper.models.response.AddItemYouTubePlaylistResponse
 import com.maxrave.kotlinytmusicscraper.models.response.BrowseResponse
+import com.maxrave.kotlinytmusicscraper.models.response.CommentsResponse
 import com.maxrave.kotlinytmusicscraper.models.response.CreatePlaylistResponse
 import com.maxrave.kotlinytmusicscraper.models.response.ImageUploadResponse
 import com.maxrave.kotlinytmusicscraper.models.response.DownloadProgress
@@ -69,6 +70,9 @@ import com.maxrave.kotlinytmusicscraper.pages.AlbumPage
 import com.maxrave.kotlinytmusicscraper.pages.ArtistPage
 import com.maxrave.kotlinytmusicscraper.pages.ArtistSection
 import com.maxrave.kotlinytmusicscraper.pages.BrowseResult
+import com.maxrave.kotlinytmusicscraper.pages.CommentItem
+import com.maxrave.kotlinytmusicscraper.pages.CommentsPage
+import com.maxrave.kotlinytmusicscraper.pages.CommentsPageParser
 import com.maxrave.kotlinytmusicscraper.pages.ExplorePage
 import com.maxrave.kotlinytmusicscraper.pages.MoodAndGenres
 import com.maxrave.kotlinytmusicscraper.pages.NextPage
@@ -1019,6 +1023,9 @@ class YouTube {
     suspend fun browse(
         browseId: String,
         params: String?,
+        // The localized label YouTube puts ahead of a song's artists on mixed shelves ("Bài hát"
+        // in Vietnamese). Left at its English default, every other language reads it as the artist.
+        songString: String = "Song",
     ): Result<BrowseResult> =
         runCatching {
             val response = ytMusic.browse(WEB_REMIX, browseId = browseId, params = params).body<BrowseResponse>()
@@ -1039,7 +1046,7 @@ class YouTube {
                         ?.content
                         ?.sectionListRenderer
                         ?.contents
-                        ?.mapNotNull(::browseSection)
+                        ?.mapNotNull { browseSection(it, songString) }
                         .orEmpty(),
             )
         }
@@ -1047,7 +1054,10 @@ class YouTube {
     // The shelf kinds Metrolist's YouTube.browse() reads — grid, carousel (immersive carousels land
     // here too, via @JsonNames), music shelf and playlist shelf — plus the mood buttons of the
     // FEmusic_moods_and_genres page. Anything else carries nothing a "More" page shows.
-    private fun browseSection(content: SectionListRenderer.Content): BrowseResult.Item? =
+    private fun browseSection(
+        content: SectionListRenderer.Content,
+        songString: String,
+    ): BrowseResult.Item? =
         when {
             content.gridRenderer != null -> {
                 BrowseResult.Item(
@@ -1061,7 +1071,7 @@ class YouTube {
                     items =
                         content.gridRenderer.items
                             .mapNotNull(GridRenderer.Item::musicTwoRowItemRenderer)
-                            .mapNotNull(RelatedPage.Companion::fromMusicTwoRowItemRenderer),
+                            .mapNotNull { RelatedPage.fromMusicTwoRowItemRenderer(it, songString) },
                     moods =
                         content.gridRenderer.items
                             .mapNotNull(GridRenderer.Item::musicNavigationButtonRenderer)
@@ -1080,7 +1090,7 @@ class YouTube {
                             ?.text,
                     items =
                         content.musicCarouselShelfRenderer.contents.mapNotNull { item ->
-                            item.musicTwoRowItemRenderer?.let(RelatedPage.Companion::fromMusicTwoRowItemRenderer)
+                            item.musicTwoRowItemRenderer?.let { RelatedPage.fromMusicTwoRowItemRenderer(it, songString) }
                                 ?: item.musicResponsiveListItemRenderer?.let(::browseListItem)
                                 ?: item.musicMultiRowListItemRenderer?.let(::browseEpisode)
                         },
@@ -1246,6 +1256,50 @@ class YouTube {
                 dislike = returnYouTubeDislikeResponse.dislikes,
             )
             // Get author thumbnails, subscribers, description, like count
+        }
+
+    /**
+     * A track's comments, from the Comments tab of YouTube Music's own watch page: the first page
+     * and its header. Null when the track has none: comments turned off, or a live stream that only
+     * has its chat. Signed in, the comments carry the like, dislike and reply commands.
+     */
+    suspend fun comments(videoId: String): Result<CommentsPage?> =
+        runCatching {
+            val next = ytMusic.next(WEB_REMIX, videoId, null, null, null, null).body<NextResponse>()
+            val token = CommentsPageParser.commentsTabToken(next) ?: return@runCatching null
+            CommentsPageParser
+                .parse(ytMusic.next(WEB_REMIX, null, null, null, null, null, token).body<CommentsResponse>())
+                .takeIf { it.header != null || it.comments.isNotEmpty() }
+        }
+
+    /** Whatever a comments token loads: the next page, a thread's replies, or more of them. */
+    suspend fun commentsPage(token: String): Result<CommentsPage> =
+        runCatching {
+            CommentsPageParser.parse(ytMusic.next(WEB_REMIX, null, null, null, null, null, token).body<CommentsResponse>())
+        }
+
+    /** Posts a comment. The result is the comment as YouTube made it, or null when its answer did not carry it. */
+    suspend fun createComment(
+        createCommentParams: String,
+        text: String,
+    ): Result<CommentItem?> =
+        runCatching {
+            CommentsPageParser.parseCreated(ytMusic.createComment(createCommentParams, text).body<CommentsResponse>())
+        }
+
+    suspend fun createCommentReply(
+        createReplyParams: String,
+        text: String,
+    ): Result<CommentItem?> =
+        runCatching {
+            CommentsPageParser.parseCreated(ytMusic.createCommentReply(createReplyParams, text).body<CommentsResponse>())
+        }
+
+    /** Like, dislike, or undo either: [action] is the token the comment's toolbar carries for it. */
+    suspend fun performCommentAction(action: String): Result<Unit> =
+        runCatching {
+            ytMusic.performCommentAction(action)
+            Unit
         }
 
     private suspend fun getVisitorData(
@@ -2142,6 +2196,11 @@ class YouTube {
             ytMusic.addToLiked(mediaId).status.value
         }
 
+    suspend fun addToDisliked(mediaId: String) =
+        runCatching {
+            ytMusic.addToDisliked(mediaId).status.value
+        }
+
     suspend fun removeFromLiked(mediaId: String) =
         runCatching {
             ytMusic.removeFromLiked(mediaId).status.value
@@ -2237,6 +2296,13 @@ class YouTube {
             trySend(DownloadProgress(0.01f))
             player(videoId = videoId)
                 .onSuccess { playerResponse ->
+                    // A live broadcast has no file to save: player() hands it back as an HLS
+                    // playlist with every format emptied, which would otherwise surface as the
+                    // misleading "Audio format url is null" below.
+                    if (playerResponse.second.videoDetails?.isLive == true) {
+                        trySend(DownloadProgress.failed("Live streams cannot be downloaded"))
+                        return@channelFlow
+                    }
                     val audioFormat =
                         listOf(
                             playerResponse.second.streamingData
@@ -2274,6 +2340,9 @@ class YouTube {
                             combine(downloadVideoJob, downloadAudioJob) { videoProgress, audioProgress ->
                                 Pair(videoProgress, audioProgress)
                             }.collectLatest { (videoProgress, audioProgress) ->
+                                if (videoProgress.isFailedDownload() || audioProgress.isFailedDownload()) {
+                                    throw Exception("Download failed")
+                                }
                                 if (!videoProgress.first || !audioProgress.first) {
                                     trySend(
                                         DownloadProgress(
@@ -2305,6 +2374,8 @@ class YouTube {
                                 .collect { downloadProgress ->
                                     if (!downloadProgress.first) {
                                         trySend(DownloadProgress(audioDownloadProgress = downloadProgress.second))
+                                    } else if (downloadProgress.isFailedDownload()) {
+                                        throw Exception("Download failed")
                                     } else {
                                         trySend(DownloadProgress(audioDownloadProgress = 1f, isDone = true))
                                     }
@@ -2329,6 +2400,8 @@ class YouTube {
                     trySend(DownloadProgress.failed(it.message ?: "Player response is null"))
                 }
         }.flowOn(Dispatchers.IO)
+
+    private fun Triple<Boolean, Float, Int>.isFailedDownload(): Boolean = first && second < 1f
 
     suspend fun is403Url(url: String) = ytMusic.is403Url(url)
 

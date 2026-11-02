@@ -11,13 +11,14 @@ import kotlinx.coroutines.flow.Flow
 
 interface HomeRepository {
     /**
-     * @return Pair of continueParams and HomeItem List
+     * @return Triple of continueParams, HomeItem List and the URL of the page background image
+     * YouTube sends with Home (null when it sends none)
      */
     fun getHomeData(
         params: String? = null,
         viewString: String,
         songString: String,
-    ): Flow<Resource<Pair<String?, List<HomeItem>>>>
+    ): Flow<Resource<Triple<String?, List<HomeItem>, String?>>>
 
     fun getHomeDataContinue(
         continueParam: String,
@@ -47,9 +48,13 @@ interface HomeRepository {
 
     fun getMoodData(params: String): Flow<Resource<MoodsMomentObject>>
 
-    /** The page a home section's "More" endpoint points to — see [BrowsePage]. */
+    /**
+     * The page a home section's "More" endpoint points to — see [BrowsePage]. [songString] is the
+     * localized "Song" label, the same one the Home shelves are parsed with.
+     */
     fun getBrowsePage(
         browseId: String,
         params: String?,
+        songString: String,
     ): Flow<Resource<BrowsePage>>
 }
