@@ -783,6 +783,14 @@ interface DatabaseDao {
     @Update
     suspend fun updateNewFormat(format: NewFormatEntity)
 
+    @Query("UPDATE new_format SET bpm = :bpm, music_key = :musicKey, keyScale = :keyScale WHERE videoId = :videoId")
+    suspend fun updateNewFormatAudioMetadata(
+        videoId: String,
+        bpm: Int?,
+        musicKey: String?,
+        keyScale: String?,
+    )
+
     @Query("SELECT * FROM new_format WHERE videoId = :videoId")
     suspend fun getNewFormat(videoId: String): NewFormatEntity?
 

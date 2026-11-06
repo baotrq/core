@@ -92,6 +92,7 @@ import kotlinx.coroutines.flow.cancellable
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.distinctUntilChangedBy
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
@@ -604,7 +605,9 @@ class JvmMediaPlayerHandlerImpl(
                 }
             val playbackJob =
                 launch {
-                    format.collectLatest { formatTemp ->
+                    // Once per playback session (cpn): the row changes again when AutoMix metadata lands,
+                    // and that must not report the play to YouTube twice or reset the watch-time list.
+                    format.distinctUntilChangedBy { it?.cpn }.collectLatest { formatTemp ->
                         if (dataStoreManager.sendBackToGoogle.first() == TRUE) {
                             if (formatTemp != null) {
                                 println("format in viewModel: $formatTemp")

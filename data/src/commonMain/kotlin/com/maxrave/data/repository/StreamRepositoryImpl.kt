@@ -21,24 +21,30 @@ import com.maxrave.kotlinytmusicscraper.YouTube
 import com.maxrave.kotlinytmusicscraper.models.MediaType
 import com.maxrave.kotlinytmusicscraper.models.response.PlayerResponse
 import com.maxrave.logger.Logger
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 internal class StreamRepositoryImpl(
     private val localDataSource: LocalDataSource,
     private val youTube: YouTube,
 ) : StreamRepository {
+    // Its own scope: the search outlives the player request that started it.
+    private val audioMetadataScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
     override suspend fun insertNewFormat(newFormat: NewFormatEntity) =
         withContext(Dispatchers.IO) {
             localDataSource.insertNewFormat(newFormat)
         }
 
-    override fun getNewFormat(videoId: String): Flow<NewFormatEntity?> = flow { emit(localDataSource.getNewFormat(videoId)) }.flowOn(Dispatchers.Main)
+    override fun getNewFormat(videoId: String): Flow<NewFormatEntity?> = flow { emit(localDataSource.getNewFormat(videoId)) }.flowOn(Dispatchers.IO)
 
     override suspend fun getFormatFlow(videoId: String) = localDataSource.getNewFormatAsFlow(videoId)
 
@@ -200,40 +206,13 @@ internal class StreamRepositoryImpl(
                             ", expires in ${response.streamingData?.expiresInSeconds}s",
                     )
                     val durationSecond = response.videoDetails?.lengthSeconds?.toIntOrNull()
-                    // AutoMix metadata from Tidal official API
-                    var tidalBpm: Int? = null
-                    var tidalMusicKey: String? = null
-                    var tidalKeyScale: String? = null
-                    if (!isVideo && durationSecond != null && data.third == MediaType.Song) {
-                        val title = response.videoDetails?.title ?: ""
-                        val author = response.videoDetails?.author ?: ""
-                        val q =
-                            "$title $author"
-                                .replace(
-                                    Regex("\\((feat\\.|ft.|cùng với|con|mukana|com|avec|合作音乐人: ) "),
-                                    " ",
-                                ).replace(
-                                    Regex("( và | & | и | e | und |, |和| dan)"),
-                                    " ",
-                                ).replace("  ", " ")
-                                .replace(Regex("([()])"), "")
-                                .replace(".", " ")
-                                .replace("  ", " ")
-                        Logger.d("Stream", "Search Tidal metadata for: $q")
-                        youTube
-                            .searchTidalMetadata(q, durationSecond)
-                            .onSuccess { metadata ->
-                                Logger.d("Stream", "Tidal metadata: $metadata")
-                                tidalBpm = metadata.bpm
-                                tidalMusicKey = metadata.musicKey
-                                tidalKeyScale = metadata.keyScale
-                            }.onFailure {
-                                Logger.e("Stream", "Tidal metadata error: ${it.message}", it)
-                            }
-                    }
+                    val formatRowId = if (VIDEO_QUALITY.itags.contains(format?.itag)) "${MERGING_DATA_TYPE.VIDEO}$videoId" else videoId
+                    // The row is about to be replaced; what an earlier search found for this song still holds.
+                    val knownMetadata =
+                        localDataSource.getNewFormat(formatRowId)?.takeIf { it.bpm != null || it.musicKey != null }
                     insertNewFormat(
                         NewFormatEntity(
-                            videoId = if (VIDEO_QUALITY.itags.contains(format?.itag)) "${MERGING_DATA_TYPE.VIDEO}$videoId" else videoId,
+                            videoId = formatRowId,
                             itag = format?.itag ?: itag,
                             mimeType =
                                 Regex("""([^;]+);\s*codecs=["']([^"']+)["']""")
@@ -275,11 +254,19 @@ internal class StreamRepositoryImpl(
                             expiredTime = now().plusSeconds(response.streamingData?.expiresInSeconds?.toLong() ?: 0L),
                             audioUrl = if (muxed) response.streamingData?.hlsManifestUrl else format?.url,
                             videoUrl = if (muxed) response.streamingData?.hlsManifestUrl else videoFormat?.url,
-                            bpm = tidalBpm,
-                            musicKey = tidalMusicKey,
-                            keyScale = tidalKeyScale,
+                            bpm = knownMetadata?.bpm,
+                            musicKey = knownMetadata?.musicKey,
+                            keyScale = knownMetadata?.keyScale,
                         ),
                     )
+                    if (knownMetadata == null && !isVideo && durationSecond != null && data.third == MediaType.Song) {
+                        searchAudioMetadataInBackground(
+                            formatRowId = formatRowId,
+                            title = response.videoDetails?.title ?: "",
+                            author = response.videoDetails?.author ?: "",
+                            durationSecond = durationSecond,
+                        )
+                    }
                     if (data.first != null) {
                         emit(
                             if (muxed) {
@@ -315,6 +302,51 @@ internal class StreamRepositoryImpl(
                     emit(null)
                 }
         }.flowOn(Dispatchers.IO)
+
+    /**
+     * BPM and key for AutoMix, from Tidal. Only crossfade reads them, and it asks again when a fade is
+     * about to start, so nothing waits for this: measured on a phone, the search was about a third of
+     * the time from tapping a song to hearing it.
+     *
+     * Writes the three columns alone, so a format that was re-extracted meanwhile keeps its new URL.
+     */
+    private fun searchAudioMetadataInBackground(
+        formatRowId: String,
+        title: String,
+        author: String,
+        durationSecond: Int,
+    ) {
+        audioMetadataScope.launch {
+            val q =
+                "$title $author"
+                    .replace(
+                        Regex("\\((feat\\.|ft.|cùng với|con|mukana|com|avec|合作音乐人: ) "),
+                        " ",
+                    ).replace(
+                        Regex("( và | & | и | e | und |, |和| dan)"),
+                        " ",
+                    ).replace("  ", " ")
+                    .replace(Regex("([()])"), "")
+                    .replace(".", " ")
+                    .replace("  ", " ")
+            Logger.d("Stream", "Search Tidal metadata for: $q")
+            youTube
+                .searchTidalMetadata(q, durationSecond)
+                .onSuccess { metadata ->
+                    Logger.d("Stream", "Tidal metadata: $metadata")
+                    runCatching {
+                        localDataSource.updateNewFormatAudioMetadata(
+                            formatRowId,
+                            metadata.bpm,
+                            metadata.musicKey,
+                            metadata.keyScale,
+                        )
+                    }.onFailure { Logger.e("Stream", "Saving Tidal metadata failed: ${it.message}", it) }
+                }.onFailure {
+                    Logger.e("Stream", "Tidal metadata error: ${it.message}", it)
+                }
+        }
+    }
 
     override fun initPlayback(
         playback: String,
