@@ -4,7 +4,7 @@ import com.maxrave.domain.extension.decodeHtmlEntities
 import org.simpmusic.lyrics.domain.Lyrics
 
 fun parseSyncedLyrics(data: String): Lyrics {
-    val regex = Regex("\\[(\\d{2}):(\\d{2})\\.(\\d{2})\\](.+)")
+    val regex = Regex("\\[(\\d{2}):(\\d{2})\\.(\\d{2,3})\\](.+)")
     val lines = data.lines()
     val linesLyrics = ArrayList<Lyrics.LyricsX.Line>()
     lines.map { line ->
@@ -12,7 +12,8 @@ fun parseSyncedLyrics(data: String): Lyrics {
         if (matchResult != null) {
             val minutes = matchResult.groupValues[1].toLong()
             val seconds = matchResult.groupValues[2].toLong()
-            val milliseconds = matchResult.groupValues[3].toLong()
+            // Two digits are hundredths of a second, three are milliseconds.
+            val milliseconds = parseMillisPart(matchResult.groupValues[3])
             val timeInMillis = minutes * 60_000L + seconds * 1000L + milliseconds
             // Trim, don't drop a fixed first character. Most providers leave a space after
             // "]", but LRCLIB packs the text right against it — "[00:27.12]boy, you got me"
@@ -146,16 +147,22 @@ fun parseTtmlLyrics(data: String): Lyrics {
         if (spans.isNotEmpty()) {
             hasWordTiming = true
             // Build word-by-word content with <MM:SS.mm> timing format for rich sync
-            val wordParts = StringBuilder()
+            val wordParts = mutableListOf<String>()
+            var previousEnd = -1
             for (span in spans) {
                 val spanBegin = parseTtmlTime(span.groupValues[1])
                 val word = span.groupValues[3].trim()
                 if (word.isNotEmpty()) {
-                    val beginFormatted = formatMsToLrc(spanBegin)
-                    wordParts.append("<$beginFormatted>$word ")
+                    // Spans with nothing between them are syllables of one word: "e" + "nough".
+                    if (span.range.first == previousEnd && wordParts.isNotEmpty()) {
+                        wordParts[wordParts.lastIndex] += word
+                    } else {
+                        wordParts += "<${formatMsToLrc(spanBegin)}>$word"
+                    }
                 }
+                previousEnd = span.range.last + 1
             }
-            val words = wordParts.toString().trimEnd()
+            val words = wordParts.joinToString(" ")
             if (words.isNotBlank()) {
                 linesLyrics.add(
                     Lyrics.LyricsX.Line(

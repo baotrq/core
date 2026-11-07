@@ -25,6 +25,7 @@ import com.maxrave.domain.utils.toRichSyncLrcString
 import com.maxrave.domain.utils.toSyncedLrcString
 import com.maxrave.domain.utils.toSyncedLyrics
 import com.maxrave.kotlinytmusicscraper.YouTube
+import com.maxrave.kotlinytmusicscraper.models.WatchEndpoint
 import com.maxrave.logger.Logger
 import com.maxrave.spotify.Spotify
 import kotlinx.coroutines.Dispatchers
@@ -48,7 +49,10 @@ import org.simpmusic.lyrics.am.AMSongWithAlbum
 import org.simpmusic.lyrics.am.toImageUrl
 import org.simpmusic.lyrics.models.request.LyricsBody
 import org.simpmusic.lyrics.models.request.TranslatedLyricsBody
+import org.simpmusic.lyrics.parser.artistForLyricsSearch
+import org.simpmusic.lyrics.parser.forLyricsSearch
 import org.simpmusic.lyrics.parser.parseTtmlLyrics
+import org.simpmusic.lyrics.parser.parseUnsyncedLyrics
 import kotlin.math.abs
 import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
@@ -489,30 +493,8 @@ internal class LyricsCanvasRepositoryImpl(
     ): Flow<Resource<Lyrics>> =
         flow {
             Logger.w("Lyrics", "getLrclibLyricsData: $sartist $strack $duration")
-            val qartist =
-                sartist
-                    .replace(
-                        Regex("\\((feat\\.|ft.|cùng với|con|mukana|com|avec|合作音乐人: ) "),
-                        " ",
-                    ).replace(
-                        Regex("( và | & | и | e | und |, |和| dan)"),
-                        " ",
-                    ).replace("  ", " ")
-                    .replace(Regex("([()])"), "")
-                    .replace(".", " ")
-            val qtrack =
-                strack
-                    .replace(
-                        Regex("\\((feat\\.|ft.|cùng với|con|mukana|com|avec|合作音乐人: ) "),
-                        " ",
-                    ).replace(
-                        Regex("( và | & | и | e | und |, |和| dan)"),
-                        " ",
-                    ).replace("  ", " ")
-                    .replace(Regex("([()])"), "")
-                    .replace(".", " ")
             simpMusicLyrics
-                .searchLrclibLyrics(qtrack, qartist, duration)
+                .searchLrclibLyrics(strack.forLyricsSearch(), sartist.artistForLyricsSearch(), duration)
                 .onSuccess {
                     // A search with no match must still answer: the caller falls back to the
                     // offline cache only on an emitted error, and an empty flow skips it.
@@ -530,30 +512,8 @@ internal class LyricsCanvasRepositoryImpl(
     ): Flow<Resource<Lyrics>> =
         flow {
             Logger.w("Lyrics", "getBetterLyrics: $artist $track")
-            val qartist =
-                artist
-                    .replace(
-                        Regex("\\((feat\\.|ft.|cùng với|con|mukana|com|avec|合作音乐人: ) "),
-                        " ",
-                    ).replace(
-                        Regex("( và | & | и | e | und |, |和| dan)"),
-                        " ",
-                    ).replace("  ", " ")
-                    .replace(Regex("([()])"), "")
-                    .replace(".", " ")
-            val qtrack =
-                track
-                    .replace(
-                        Regex("\\((feat\\.|ft.|cùng với|con|mukana|com|avec|合作音乐人: ) "),
-                        " ",
-                    ).replace(
-                        Regex("( và | & | и | e | und |, |和| dan)"),
-                        " ",
-                    ).replace("  ", " ")
-                    .replace(Regex("([()])"), "")
-                    .replace(".", " ")
             simpMusicLyrics
-                .searchBetterLyrics(qtrack, qartist, duration)
+                .searchBetterLyrics(track.forLyricsSearch(), artist.artistForLyricsSearch(), duration)
                 .onSuccess { ttml ->
                     if (ttml.isNullOrEmpty()) {
                         emit(Resource.Error<Lyrics>("No BetterLyrics found"))
@@ -565,6 +525,38 @@ internal class LyricsCanvasRepositoryImpl(
                     it.printStackTrace()
                     emit(Resource.Error<Lyrics>("BetterLyrics search failed"))
                 }
+        }.flowOn(Dispatchers.IO)
+
+    override fun getExtraLyrics(
+        provider: String,
+        videoId: String,
+        artist: String,
+        track: String,
+        duration: Int?,
+    ): Flow<Resource<Lyrics>> =
+        flow {
+            val cleanTrack = track.forLyricsSearch()
+            val cleanArtist = artist.artistForLyricsSearch()
+            val result =
+                when (provider) {
+                    DataStoreManager.LRC_RED -> simpMusicLyrics.searchLrcRedLyrics(cleanTrack, cleanArtist, duration)
+                    DataStoreManager.KUGOU -> simpMusicLyrics.searchKugouLyrics(cleanTrack, cleanArtist, duration)
+                    DataStoreManager.MEGALOBIZ -> simpMusicLyrics.searchMegalobizLyrics(cleanTrack, cleanArtist, duration)
+                    DataStoreManager.YOUTUBE_MUSIC ->
+                        runCatching {
+                            youTube
+                                .next(WatchEndpoint(videoId = videoId))
+                                .getOrThrow()
+                                .lyricsEndpoint
+                                ?.let { youTube.lyrics(it).getOrThrow() }
+                                ?.takeIf { it.isNotBlank() }
+                                ?.let { parseUnsyncedLyrics(it) }
+                        }
+                    else -> Result.success(null)
+                }
+            val lyrics = result.getOrNull()?.toLyrics()?.takeUnless { it.lines.isNullOrEmpty() }
+            result.exceptionOrNull()?.let { Logger.w("Lyrics", "$provider failed: ${it.message}") }
+            emit(if (lyrics != null) Resource.Success(lyrics) else Resource.Error<Lyrics>("No lyrics from $provider"))
         }.flowOn(Dispatchers.IO)
 
     override fun getArtistEditorial(artistName: String): Flow<Resource<ArtistEditorial>> =

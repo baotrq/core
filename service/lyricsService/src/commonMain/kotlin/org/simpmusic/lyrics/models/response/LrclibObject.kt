@@ -9,7 +9,8 @@ data class LrclibObject(
     val trackName: String?,
     val artistName: String?,
     val albumName: String?,
-    val duration: Float,
+    // LRCLIB answers null for some entries, and one of those used to fail the whole search.
+    val duration: Float? = null,
     val instrumental: Boolean,
     val plainLyrics: String?,
     val syncedLyrics: String?,

@@ -11,6 +11,7 @@ import com.maxrave.domain.data.entities.NewFormatEntity
 import com.maxrave.domain.data.model.browse.album.Track
 import com.maxrave.domain.data.model.mediaService.SponsorSkipSegments
 import com.maxrave.domain.data.player.LiveStreamRegistry
+import com.maxrave.domain.data.player.MeteredNetwork
 import com.maxrave.domain.extension.isBefore
 import com.maxrave.domain.extension.now
 import com.maxrave.domain.extension.plusSeconds
@@ -102,7 +103,15 @@ internal class StreamRepositoryImpl(
                 if (isDownloading && dataStoreManager.carMode.first() != DataStoreManager.TRUE) {
                     QUALITY.itagOf(dataStoreManager.downloadQuality.first())
                 } else {
-                    QUALITY.itagOf(dataStoreManager.quality.first())
+                    // Only playback follows the network. A Car mode download arrives here too, and it
+                    // is kept for good, so it stays at the main quality whatever it was fetched over.
+                    val mobileQuality =
+                        if (!isDownloading && MeteredNetwork.check()) {
+                            dataStoreManager.getString(DataStoreManager.MOBILE_QUALITY_KEY).first()?.takeIf { it.isNotBlank() }
+                        } else {
+                            null
+                        }
+                    QUALITY.itagOf(mobileQuality ?: dataStoreManager.quality.first())
                 }
             val videoItag =
                 if (!muxed) {

@@ -21,13 +21,18 @@ import io.ktor.client.request.parameter
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
+import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpHeaders
+import io.ktor.http.encodeURLParameter
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.serialization.json.Json
 import org.simpmusic.lyrics.am.AMTokenManager
 import org.simpmusic.lyrics.models.request.LyricsBody
 import org.simpmusic.lyrics.models.request.TranslatedLyricsBody
 import org.simpmusic.lyrics.models.request.VoteBody
+
+// Megalobiz's fair-use terms ask for an app name and a contact URL.
+private const val EXTRA_LYRICS_USER_AGENT = "SimpMusic (+https://github.com/baotrq/SimpMusic)"
 
 class SimpMusicLyrics {
     private var httpClient = createClient()
@@ -187,6 +192,20 @@ class SimpMusicLyrics {
     ) = httpClient.get("https://lrclib.net/api/search") {
         buildDefaultHeaders()
         parameter("q", "$q_artist $q_track")
+    }
+
+    /** A GET to a lyrics catalogue outside the SimpMusic backend, so none of its headers go along. */
+    suspend fun getText(
+        url: String,
+        parameters: Map<String, String> = emptyMap(),
+    ): String {
+        // Built by hand for %20: parameter() sends a space as "+", which KuGou's search does not read
+        // as a space, so it answers with other songs.
+        val query = parameters.entries.joinToString("&") { (name, value) -> "$name=${value.encodeURLParameter()}" }
+        return httpClient
+            .get(if (query.isEmpty()) url else "$url?$query") {
+                header(HttpHeaders.UserAgent, EXTRA_LYRICS_USER_AGENT)
+            }.bodyAsText()
     }
 
     suspend fun searchBetterLyrics(

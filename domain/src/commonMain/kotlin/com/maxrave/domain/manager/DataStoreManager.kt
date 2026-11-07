@@ -642,10 +642,17 @@ interface DataStoreManager {
     }
 
     companion object Values {
+        /** Read through [getString]: the quality label for mobile data, blank to use the main quality. */
+        const val MOBILE_QUALITY_KEY = "quality_mobile"
+
         const val SIMPMUSIC = "simpmusic"
         const val YOUTUBE = "youtube"
         const val LRCLIB = "lrclib"
         const val BETTER_LYRICS = "better_lyrics"
+        const val LRC_RED = "lrc_red"
+        const val KUGOU = "kugou"
+        const val MEGALOBIZ = "megalobiz"
+        const val YOUTUBE_MUSIC = "youtube_music"
 
         const val FDROID = "fdroid"
         const val GITHUB_FOSS_NIGHTLY = "github_foss_nightly"

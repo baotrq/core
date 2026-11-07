@@ -72,6 +72,15 @@ interface LyricsCanvasRepository {
         duration: Int?,
     ): Flow<Resource<Lyrics>>
 
+    /** [provider] is DataStoreManager.LRC_RED, KUGOU, MEGALOBIZ or YOUTUBE_MUSIC. Always emits once. */
+    fun getExtraLyrics(
+        provider: String,
+        videoId: String,
+        artist: String,
+        track: String,
+        duration: Int?,
+    ): Flow<Resource<Lyrics>>
+
     /**
      * Fetch everything the hidden catalog holds for an artist: the name-logo image with its
      * dominant color, and the animated artist artwork.

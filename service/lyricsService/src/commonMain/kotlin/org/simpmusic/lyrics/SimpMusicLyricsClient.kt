@@ -19,7 +19,14 @@ import org.simpmusic.lyrics.models.response.BetterLyricsResponse
 import org.simpmusic.lyrics.models.response.LrclibObject
 import org.simpmusic.lyrics.models.response.LyricsResponse
 import org.simpmusic.lyrics.models.response.TranslatedLyricsResponse
+import org.simpmusic.lyrics.parser.bestLrclibMatch
+import org.simpmusic.lyrics.parser.kugouCandidate
+import org.simpmusic.lyrics.parser.kugouLrc
+import org.simpmusic.lyrics.parser.kugouSongHashes
+import org.simpmusic.lyrics.parser.lrcRedIsrc
+import org.simpmusic.lyrics.parser.megalobizSheetId
 import org.simpmusic.lyrics.parser.parseSyncedLyrics
+import org.simpmusic.lyrics.parser.parseTtmlLyrics
 import org.simpmusic.lyrics.parser.parseUnsyncedLyrics
 import kotlin.math.abs
 
@@ -129,12 +136,7 @@ class SimpMusicLyricsClient {
                     q_track = q_track,
                     q_artist = q_artist,
                 ).body<List<LrclibObject>>()
-        val lrclibObject: LrclibObject? =
-            if (duration != null) {
-                rs.find { abs(it.duration.toInt() - duration) <= 10 }
-            } else {
-                rs.firstOrNull()
-            }
+        val lrclibObject: LrclibObject? = bestLrclibMatch(rs, q_track, q_artist, duration)
         if (lrclibObject != null) {
             val syncedLyrics = lrclibObject.syncedLyrics
             val plainLyrics = lrclibObject.plainLyrics
@@ -147,6 +149,69 @@ class SimpMusicLyricsClient {
             }
         } else {
             null
+        }
+    }
+
+    /** KuGou's public lyric endpoints, line-synced. Null when no song of this title and length is there. */
+    suspend fun searchKugouLyrics(
+        track: String,
+        artist: String,
+        durationSeconds: Int?,
+    ) = runCatching {
+        val songs =
+            lyricsService.getText(
+                "https://mobileservice.kugou.com/api/v3/search/song",
+                mapOf("version" to "9108", "plat" to "0", "pagesize" to "8", "showtype" to "0", "keyword" to "$track - $artist"),
+            )
+        kugouSongHashes(songs, track, artist, durationSeconds)
+            .take(3)
+            .firstNotNullOfOrNull { hash ->
+                val candidates =
+                    lyricsService.getText(
+                        "https://lyrics.kugou.com/search",
+                        mapOf("ver" to "1", "man" to "yes", "client" to "pc", "hash" to hash),
+                    )
+                val (id, accessKey) = kugouCandidate(candidates) ?: return@firstNotNullOfOrNull null
+                kugouLrc(
+                    lyricsService.getText(
+                        "https://lyrics.kugou.com/download",
+                        mapOf("fmt" to "lrc", "charset" to "utf8", "client" to "pc", "ver" to "1", "id" to id, "accesskey" to accessKey),
+                    ),
+                )
+            }?.let { parseSyncedLyrics(it) }
+    }
+
+    /** Apple Music's word timing, filed by recording. Null unless a hit is surely this recording. */
+    suspend fun searchLrcRedLyrics(
+        track: String,
+        artist: String,
+        durationSeconds: Int?,
+    ) = runCatching {
+        val search = lyricsService.getText("https://lrc.red/search.json", mapOf("q" to "$track $artist".trim()))
+        lrcRedIsrc(search, track, artist, durationSeconds)?.let { isrc ->
+            parseTtmlLyrics(lyricsService.getText("https://lrc.red/s/$isrc.ttml"))
+        }
+    }
+
+    /** Megalobiz's free public API, line-synced. */
+    suspend fun searchMegalobizLyrics(
+        track: String,
+        artist: String,
+        durationSeconds: Int?,
+    ) = runCatching {
+        val base = "https://api.megalobiz.com/api/public/v1"
+        val search =
+            lyricsService.getText(
+                "$base/search",
+                buildMap {
+                    put("title", track)
+                    put("artist", artist)
+                    put("limit", "5")
+                    durationSeconds?.let { put("duration", it.toString()) }
+                },
+            )
+        megalobizSheetId(search, track, artist, durationSeconds)?.let { id ->
+            parseSyncedLyrics(lyricsService.getText("$base/lrc/$id", mapOf("format" to "lrc")))
         }
     }
 
