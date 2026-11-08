@@ -1199,7 +1199,9 @@ class JvmMediaPlayerHandlerImpl(
 
             is PlayerEvent.UpdateProgress -> {
                 resetPositionSmoothing()
-                player.seekTo((player.duration * playerEvent.newProgress / 100).toLong())
+                // A percentage of an unknown duration is not a position.
+                val duration = player.duration
+                if (duration > 0L) player.seekTo((duration * playerEvent.newProgress / 100).toLong())
                 if (player.isPlaying) {
                     nowPlayingState.value.songEntity?.let { updateDiscordRpc(it) }
                 }

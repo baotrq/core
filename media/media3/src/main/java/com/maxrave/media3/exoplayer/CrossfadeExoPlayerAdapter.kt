@@ -1726,15 +1726,7 @@ internal class CrossfadeExoPlayerAdapter(
                     // ran into a live broadcast holds nothing playable (its progressive source threw
                     // LiveStreamDetectedException while nobody was listening), so it is dropped and
                     // the track is built afresh, which now gives it an HLS source.
-                    val cachedPlayerEntry =
-                        precachedPlayers.remove(videoId)?.let { cached ->
-                            if (cached.player.playerError == null) {
-                                cached
-                            } else {
-                                cached.player.release()
-                                null
-                            }
-                        }
+                    val cachedPlayerEntry = takeHealthyPrecachedPlayer(videoId)
                     val player: ExoPlayer
                     val playerFilter: CrossfadeFilterAudioProcessor?
                     if (cachedPlayerEntry?.player != null) {
@@ -2264,8 +2256,10 @@ internal class CrossfadeExoPlayerAdapter(
 
                 Logger.d(TAG, "Starting crossfade to track $nextIndex")
 
-                // Get or create secondary player
-                val cachedPlayerEntry = precachedPlayers.remove(nextVideoId)
+                // Get or create secondary player. A precache that failed (a network drop while it
+                // resolved its URL) already fired its error with no listener attached, so swapping it
+                // in leaves a dead player that nothing reports: 00:00, no sound, the app still PLAYING.
+                val cachedPlayerEntry = takeHealthyPrecachedPlayer(nextVideoId)
                 val nextPlayer: ExoPlayer
                 val nextFilter: CrossfadeFilterAudioProcessor?
                 if (cachedPlayerEntry?.player != null) {
@@ -3037,6 +3031,16 @@ internal class CrossfadeExoPlayerAdapter(
         // Reset state
         setCrossfading(false)
         crossfadeFromIndex = -1
+
+        // The incoming player failed during the fade. Its error was dropped then, because the listener
+        // only acts for the current player, so nothing would ever report it. Load the track once more:
+        // that player is current from the start, so a second failure surfaces as a normal error.
+        if (nextPlayer.playerError != null) {
+            Logger.w(TAG, "Incoming player failed during crossfade (${nextPlayer.playerError?.errorCodeName}); reloading the track")
+            loadAndPlayTrackInternal(localCurrentMediaItemIndex, 0L, shouldPlay = true)
+            return
+        }
+
         transitionToState(InternalState.PLAYING)
 
         // Ensure MediaSession notification has correct metadata after crossfade completes.
@@ -3102,7 +3106,8 @@ internal class CrossfadeExoPlayerAdapter(
                                     val speed = internalPlaybackSpeed.coerceAtLeast(0.1f)
                                     val timeRemaining = ((dur - pos) / speed).toLong()
                                     val nextVideoId = playlist.getOrNull(getNextMediaItemIndex())?.mediaId
-                                    val isPrecached = nextVideoId != null && precachedPlayers.containsKey(nextVideoId)
+                                    // A failed precache will be rebuilt, so it needs the preparation time below.
+                                    val isPrecached = nextVideoId?.let { precachedPlayers[it] }?.let { it.player.playerError == null } == true
                                     // If next track is precached, trigger at exactly crossfadeDurationMs.
                                     // If NOT precached, trigger 3s earlier to allow preparation time.
                                     val preparationBufferMs = if (isPrecached) 0L else 3000L
@@ -3139,6 +3144,15 @@ internal class CrossfadeExoPlayerAdapter(
     }
 
     // ========== Internal: Precaching ==========
+
+    /** Removes and returns the precached player for [videoId]; one that already failed is released instead. */
+    private fun takeHealthyPrecachedPlayer(videoId: String): PrecachedPlayer? {
+        val cached = precachedPlayers.remove(videoId) ?: return null
+        val error = cached.player.playerError ?: return cached
+        Logger.w(TAG, "Discarding failed precached player for $videoId: ${error.errorCodeName}")
+        cached.player.release()
+        return null
+    }
 
     /**
      * Trigger precaching - mirrors GstreamerPlayerAdapter.triggerPrecachingInternal()
