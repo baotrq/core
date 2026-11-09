@@ -288,6 +288,31 @@ internal class DelegatingForwardingPlayer(
         return super.isCommandAvailable(command)
     }
 
+    // ========== Empty Media Item Lists ==========
+
+    // SimpleMediaSessionCallback loads through MediaPlayerHandler and hands Media3 an empty list,
+    // which Media3 still passes to setMediaItems. On the delegate that would clear the active
+    // ExoPlayer, so an empty list means "leave the player alone".
+
+    override fun setMediaItems(mediaItems: MutableList<MediaItem>) {
+        if (mediaItems.isNotEmpty()) super.setMediaItems(mediaItems)
+    }
+
+    override fun setMediaItems(
+        mediaItems: MutableList<MediaItem>,
+        resetPosition: Boolean,
+    ) {
+        if (mediaItems.isNotEmpty()) super.setMediaItems(mediaItems, resetPosition)
+    }
+
+    override fun setMediaItems(
+        mediaItems: MutableList<MediaItem>,
+        startIndex: Int,
+        startPositionMs: Long,
+    ) {
+        if (mediaItems.isNotEmpty()) super.setMediaItems(mediaItems, startIndex, startPositionMs)
+    }
+
     override fun hasNextMediaItem(): Boolean =
         playlistNavigationProvider?.hasNextMediaItem() ?: super.hasNextMediaItem()
 

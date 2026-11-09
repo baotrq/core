@@ -257,12 +257,13 @@ internal class SimpleMediaSessionCallback(
         params: MediaLibraryService.LibraryParams?,
     ): ListenableFuture<LibraryResult<Void>> =
         scope.future(Dispatchers.IO) {
+            // Cleared up front so a failed search cannot return the previous query's results
+            searchTempList.clear()
             val searchResult =
                 searchRepository.getSearchDataSong(query).lastOrNull()?.let { resource ->
                     when (resource) {
                         is Resource.Success -> {
                             resource.data?.let {
-                                searchTempList.clear()
                                 searchTempList.addAll(it.toListTrack())
                             }
                             resource.data
@@ -558,10 +559,15 @@ internal class SimpleMediaSessionCallback(
             val path =
                 mediaItems.firstOrNull()?.mediaId?.split("/")
                     ?: return@future defaultResult
+            Logger.i(TAG, "onSetMediaItems: ${controller.packageName} tapped ${mediaItems.first().mediaId}")
             when (path.firstOrNull()) {
                 SONG -> {
                     val songId = path.getOrNull(1) ?: return@future defaultResult
-                    val firstQueue = songRepository.getSongById(songId).first()?.toTrack() ?: return@future defaultResult
+                    // A search result has no song row until loadMediaItem inserts it
+                    val firstQueue =
+                        songRepository.getSongById(songId).first()?.toTrack()
+                            ?: searchTempList.firstOrNull { it.videoId == songId }
+                            ?: return@future defaultResult
                     mediaPlayerHandler.setQueueData(
                         QueueData.Data(
                             listTracks = arrayListOf(firstQueue),
