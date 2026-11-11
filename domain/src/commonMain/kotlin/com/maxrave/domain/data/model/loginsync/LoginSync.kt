@@ -1,6 +1,6 @@
 package com.maxrave.domain.data.model.loginsync
 
-/** A sign-in the phone can hand to the desktop. Only sign-ins travel — never settings or API keys. */
+/** Something the phone can hand to the desktop: a sign-in, or a group of settings copied once. */
 enum class LoginSyncService(
     val label: String,
 ) {
@@ -8,6 +8,11 @@ enum class LoginSyncService(
     SPOTIFY("Spotify"),
     DISCORD("Discord"),
     LASTFM("Last.fm"),
+    AI_SETTINGS("AI settings"),
+    APP_SETTINGS("App settings"),
+
+    /** The private sync server and its key. Offered only with the hidden tools unlocked. */
+    PLAYBACK_SYNC("Playback sync"),
 }
 
 /** The computer the phone is about to trust, as the computer names itself. */

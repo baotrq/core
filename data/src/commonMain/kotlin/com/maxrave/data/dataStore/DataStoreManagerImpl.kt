@@ -200,6 +200,41 @@ internal class DataStoreManagerImpl(
         }
     }
 
+    override suspend fun readPreferences(names: Set<String>): Map<String, Any> =
+        settingsDataStore.data
+            .first()
+            .asMap()
+            .entries
+            .filter { it.key.name in names }
+            .associate { it.key.name to it.value }
+
+    override suspend fun writePreferences(
+        values: Map<String, Any>,
+        removed: Set<String>,
+    ) {
+        withContext(Dispatchers.IO) {
+            settingsDataStore.edit { settings ->
+                settings
+                    .asMap()
+                    .keys
+                    .filter { it.name in removed }
+                    .forEach {
+                        @Suppress("UNCHECKED_CAST")
+                        settings.remove(it as Preferences.Key<Any>)
+                    }
+                values.forEach { (name, value) ->
+                    when (value) {
+                        is String -> settings[stringPreferencesKey(name)] = value
+                        is Int -> settings[intPreferencesKey(name)] = value
+                        is Long -> settings[longPreferencesKey(name)] = value
+                        is Float -> settings[floatPreferencesKey(name)] = value
+                        else -> Logger.w("DataStoreManager", "Not written, unsupported type: $name")
+                    }
+                }
+            }
+        }
+    }
+
     override val loggedIn: Flow<String> =
         settingsDataStore.data.map { preferences ->
             preferences[LOGGED_IN] ?: FALSE

@@ -68,6 +68,15 @@ interface DataStoreManager {
         value: String,
     )
 
+    /** The stored values among [names], whatever their type (String, Int, Long or Float). */
+    suspend fun readPreferences(names: Set<String>): Map<String, Any>
+
+    /** Writes [values] and removes [removed] in one edit. Values of another type are skipped. */
+    suspend fun writePreferences(
+        values: Map<String, Any>,
+        removed: Set<String>,
+    )
+
     val loggedIn: Flow<String>
     val cookie: Flow<String>
     val pageId: Flow<String>

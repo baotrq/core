@@ -24,6 +24,38 @@ internal class LoginSyncStore(
             if (dataStore.lastfmSessionKey.first().isNotEmpty()) add(LoginSyncService.LASTFM)
         }
 
+    /** What this phone can offer over the QR. Separate from [signedIn], which playback sync exports. */
+    suspend fun available(): List<LoginSyncService> =
+        buildList {
+            addAll(signedIn())
+            if (!dataStore.getString(AI_API_KEY_NAME).first().isNullOrBlank()) add(LoginSyncService.AI_SETTINGS)
+            add(LoginSyncService.APP_SETTINGS)
+            val toolsUnlocked = dataStore.getString(PERSONAL_TOOLS_NAME).first() == TRUE
+            val hasServer =
+                !dataStore.getString(PLAYBACK_SYNC_URL_NAME).first().isNullOrBlank() &&
+                    !dataStore.getString(PLAYBACK_SYNC_KEY_NAME).first().isNullOrBlank()
+            if (toolsUnlocked && hasServer) add(LoginSyncService.PLAYBACK_SYNC)
+        }
+
+    private suspend fun settingsGroup(names: Set<String>): SettingsGroup {
+        val stored = dataStore.readPreferences(names)
+        return SettingsGroup(
+            values = stored.mapNotNull { (name, value) -> value.toWire(name) },
+            cleared = (names - stored.keys).toList(),
+        )
+    }
+
+    /** Writes [group] in one edit, keeping only names in [allowed] whatever the payload holds. */
+    private suspend fun applySettings(
+        group: SettingsGroup,
+        allowed: Set<String>,
+    ) {
+        dataStore.writePreferences(
+            values = group.values.filter { it.name in allowed }.mapNotNull { it.toValue() }.toMap(),
+            removed = group.cleared.filter { it in allowed }.toSet(),
+        )
+    }
+
     suspend fun bundle(services: Set<LoginSyncService>): LoginBundle =
         LoginBundle(
             youtube =
@@ -46,6 +78,9 @@ internal class LoginSyncStore(
                 } else {
                     null
                 },
+            aiSettings = if (LoginSyncService.AI_SETTINGS in services) settingsGroup(AI_SETTING_NAMES) else null,
+            appSettings = if (LoginSyncService.APP_SETTINGS in services) settingsGroup(APP_SETTING_NAMES) else null,
+            playbackSync = if (LoginSyncService.PLAYBACK_SYNC in services) settingsGroup(PLAYBACK_SYNC_SETTING_NAMES) else null,
         )
 
     /** Writes [bundle] over this device's sign-ins and returns the services it carried. */
@@ -71,6 +106,18 @@ internal class LoginSyncStore(
                 dataStore.setLastfmSession(sessionKey = it.sessionKey, username = it.username)
                 add(LoginSyncService.LASTFM)
             }
+            bundle.aiSettings?.let {
+                applySettings(it, AI_SETTING_NAMES)
+                add(LoginSyncService.AI_SETTINGS)
+            }
+            bundle.appSettings?.let {
+                applySettings(it, APP_SETTING_NAMES)
+                add(LoginSyncService.APP_SETTINGS)
+            }
+            bundle.playbackSync?.let {
+                applySettings(it, PLAYBACK_SYNC_SETTING_NAMES)
+                add(LoginSyncService.PLAYBACK_SYNC)
+            }
         }
 
     /**
@@ -92,7 +139,28 @@ internal class LoginSyncStore(
     }
 }
 
-private fun GoogleAccountEntity.toWire() = GoogleAccountWire(email, name, thumbnailUrl, pageId, authUser, cache, isUsed, netscapeCookie)
+private fun Any.toWire(name: String): SettingWire? =
+    when (this) {
+        is String -> SettingWire(name, "string", this)
+        is Int -> SettingWire(name, "int", toString())
+        is Long -> SettingWire(name, "long", toString())
+        is Float -> SettingWire(name, "float", toString())
+        else -> null
+    }
+
+private fun SettingWire.toValue(): Pair<String, Any>? {
+    val decoded: Any? =
+        when (type) {
+            "string" -> value
+            "int" -> value.toIntOrNull()
+            "long" -> value.toLongOrNull()
+            "float" -> value.toFloatOrNull()
+            else -> null
+        }
+    return decoded?.let { name to it }
+}
+
+private fun GoogleAccountEntity.toWire() =GoogleAccountWire(email, name, thumbnailUrl, pageId, authUser, cache, isUsed, netscapeCookie)
 
 private fun GoogleAccountWire.toEntity() =
     GoogleAccountEntity(

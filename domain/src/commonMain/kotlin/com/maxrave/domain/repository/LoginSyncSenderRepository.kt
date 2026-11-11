@@ -3,9 +3,10 @@ package com.maxrave.domain.repository
 import com.maxrave.domain.data.model.loginsync.DesktopInfo
 import com.maxrave.domain.data.model.loginsync.LoginSyncService
 
-/** The Android end of login sync: reads a QR, sends the chosen sign-ins. Bound on Android only. */
+/** The Android end of login sync: reads a QR, sends the chosen sign-ins and settings. Bound on Android only. */
 interface LoginSyncSenderRepository {
-    suspend fun signedInServices(): List<LoginSyncService>
+    /** What this phone can send: its sign-ins and the settings groups that apply to it. */
+    suspend fun availableServices(): List<LoginSyncService>
 
     /** Whether [qrText] is a login sync code at all; any other QR is ignored. */
     fun isInvite(qrText: String): Boolean

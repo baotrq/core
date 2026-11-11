@@ -8,12 +8,12 @@ import org.simpmusic.loginsync.LoginSyncClient
 import org.simpmusic.loginsync.LoginSyncInvite
 import org.simpmusic.loginsync.LoginSyncTransportException
 
-/** Android: turns this device's sign-ins into a payload and hands it to the loginSync service. */
+/** Android: turns this device's sign-ins and settings into a payload and hands it to the loginSync service. */
 internal class LoginSyncSenderRepositoryImpl(
     private val store: LoginSyncStore,
     private val client: LoginSyncClient,
 ) : LoginSyncSenderRepository {
-    override suspend fun signedInServices(): List<LoginSyncService> = store.signedIn()
+    override suspend fun availableServices(): List<LoginSyncService> = store.available()
 
     override fun isInvite(qrText: String): Boolean = LoginSyncInvite.parse(qrText) != null
 

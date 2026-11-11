@@ -21,7 +21,7 @@ import org.simpmusic.loginsync.reachableAddresses
 
 private const val TAG = "LoginSyncHost"
 
-/** Desktop: runs the loginSync service's server and restores whatever sign-ins the phone sends. */
+/** Desktop: runs the loginSync service's server and restores whatever sign-ins and settings the phone sends. */
 internal class LoginSyncHostRepositoryImpl(
     private val store: LoginSyncStore,
 ) : LoginSyncHostRepository,
