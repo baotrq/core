@@ -2,7 +2,6 @@ package com.maxrave.kotlinytmusicscraper
 
 import com.eygraber.uri.toKmpUri
 import com.maxrave.common.ITAG
-import com.maxrave.domain.data.player.LiveStreamRegistry
 import com.maxrave.kotlinytmusicscraper.YouTube.Companion.DEFAULT_VISITOR_DATA
 import com.maxrave.kotlinytmusicscraper.extension.toListFormat
 import com.maxrave.kotlinytmusicscraper.extractor.ExtractSource
@@ -102,12 +101,8 @@ import io.ktor.client.engine.http
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.URLBuilder
 import io.ktor.http.parseQueryString
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
@@ -149,10 +144,6 @@ private const val TAG = "YouTubeScraper"
 
 class YouTube {
     private val ytMusic = Ytmusic()
-
-    private val playerScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val playerCallsLock = Mutex()
-    private val playerCalls = mutableMapOf<String, Deferred<Result<Triple<String?, PlayerResponse, MediaType>>>>()
 
     private val tidalTokenMutex = Mutex()
     private var tidalAccessToken: String? = null
@@ -1380,10 +1371,9 @@ class YouTube {
         }
     }
 
-    private suspend fun newPipePlayer(
+    suspend fun newPipePlayer(
         videoId: String,
         tempRes: PlayerResponse,
-        extraction: Deferred<List<Pair<Int, String>>>,
         preferredAudioLanguage: String? = null,
     ): PlayerResponse? {
         val listUrlSig = mutableListOf<String>()
@@ -1395,7 +1385,7 @@ class YouTube {
         } else {
             sigResponse = tempRes
         }
-        val streamsList = extraction.await().orderByAudioTrack(preferredAudioLanguage)
+        val streamsList = ytMusic.getNewPipePlayer(videoId).orderByAudioTrack(preferredAudioLanguage)
         if (streamsList.isEmpty()) return null
 
         decodedSigResponse =
@@ -1475,13 +1465,17 @@ class YouTube {
                     ?.let { addAll(it) }
             },
         )
-        // No HEAD check here: the extractor's own check (headCheckRandomStream) already ran, and it is
-        // the one that moves on to the next tier when a URL is refused.
-        if (listUrlSig.isEmpty()) {
+        listUrlSig.forEach {
+            Logger.d(TAG, "YouTube NewPipe URL $it")
+        }
+        val randomUrl = listUrlSig.randomOrNull() ?: return null
+        if (listUrlSig.isNotEmpty() && !is403Url(randomUrl)) {
+            Logger.d(TAG, "YouTube NewPipe Found URL $randomUrl")
+            return decodedSigResponse
+        } else {
             Logger.d(TAG, "YouTube NewPipe No URL Found")
             return null
         }
-        return decodedSigResponse
     }
 
     fun isManifestUrl(url: String): Boolean = url.contains(".m3u8") || url.contains(".mpd") || url.contains("manifest")
@@ -1545,48 +1539,14 @@ class YouTube {
                 ),
         )
 
-    /**
-     * The player response for a video, with its stream URLs.
-     *
-     * A request already running for the same video is joined rather than repeated. A music video asks
-     * twice at the same moment, once for its audio source and once for its video source, and a tap can
-     * land on a song that is still being precached. The work runs in [playerScope], so one caller going
-     * away does not take the answer from the other.
-     */
+    @OptIn(ExperimentalTime::class)
     suspend fun player(
         videoId: String,
         playlistId: String? = null,
         noLogIn: Boolean = false,
         preferredAudioLanguage: String? = null,
-    ): Result<Triple<String?, PlayerResponse, MediaType>> {
-        val key = "$videoId|$playlistId|$noLogIn|$preferredAudioLanguage"
-        return playerCallsLock
-            .withLock {
-                playerCalls.getOrPut(key) {
-                    playerScope.async {
-                        try {
-                            fetchPlayer(videoId, playlistId, preferredAudioLanguage)
-                        } finally {
-                            playerCallsLock.withLock { playerCalls.remove(key) }
-                        }
-                    }
-                }
-            }.await()
-    }
-
-    @OptIn(ExperimentalTime::class)
-    private suspend fun fetchPlayer(
-        videoId: String,
-        playlistId: String?,
-        preferredAudioLanguage: String?,
     ): Result<Triple<String?, PlayerResponse, MediaType>> =
         runCatching {
-            // Started alongside the WEB_REMIX request below instead of after it, because neither needs
-            // the other's answer until both are in. It stays out of a stream already known to be live,
-            // where every tier would fail and fall through to the next. The extractor blocks its thread
-            // and cannot be cancelled, so a response that turns out not to need it lets it finish unused.
-            val knownLive = LiveStreamRegistry.isLive(videoId)
-            val extraction = if (knownLive) null else playerScope.async { ytMusic.getNewPipePlayer(videoId) }
             val cpn =
                 (1..16)
                     .map {
@@ -1683,14 +1643,7 @@ class YouTube {
                 return@runCatching Triple(cpn, tempRes.asLiveStream(liveHlsUrl), MediaType.Video)
             }
 
-            // Null only when the registry still called it live, and this response says the broadcast is over.
-            val response =
-                newPipePlayer(
-                    videoId,
-                    tempRes,
-                    extraction ?: playerScope.async { ytMusic.getNewPipePlayer(videoId) },
-                    preferredAudioLanguage,
-                )
+            val response = newPipePlayer(videoId, tempRes, preferredAudioLanguage)
             if (response != null) {
                 decodedSigResponse = response
                 Logger.d(TAG, "YouTube Player found URL")
