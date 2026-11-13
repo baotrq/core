@@ -43,7 +43,7 @@ import com.maxrave.domain.data.entities.analytics.PlaybackEventEntity
         AutoEqEntryEntity::class, AutoEqIndexMetaEntity::class, AutoEqCurveEntity::class,
         ArtistMotionEntity::class
     ],
-    version = 27,
+    version = MUSIC_DATABASE_VERSION,
     exportSchema = true,
     autoMigrations = [
         AutoMigration(from = 2, to = 3), AutoMigration(
