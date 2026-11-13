@@ -51,6 +51,7 @@ import com.maxrave.common.MERGING_DATA_TYPE
 import com.maxrave.domain.data.player.LiveStreamRegistry
 import com.maxrave.domain.extension.now
 import com.maxrave.domain.manager.DataStoreManager
+import com.maxrave.media3.utils.PlayerProxySelector
 import com.maxrave.domain.mediaservice.handler.DownloadHandler
 import com.maxrave.domain.mediaservice.handler.MediaPlayerHandler
 import com.maxrave.domain.mediaservice.player.MediaPlayerInterface
@@ -92,7 +93,6 @@ import org.koin.core.qualifier.named
 import org.koin.dsl.module
 import org.simpmusic.cast.initCast
 import org.simpmusic.cast.wrapWithCastPlayer
-import java.net.Proxy
 import kotlin.time.Duration.Companion.seconds
 
 /**
@@ -402,14 +402,14 @@ private fun provideMediaSourceFactory(
     streamRepository: StreamRepository,
     dataStoreManager: DataStoreManager,
     coroutineScope: CoroutineScope,
-): DefaultMediaSourceFactory =
-    DefaultMediaSourceFactory(
+): DefaultMediaSourceFactory {
+    PlayerProxySelector.watch(dataStoreManager, coroutineScope)
+    return DefaultMediaSourceFactory(
         provideResolvingDataSourceFactory(
             provideCacheDataSource(
                 downloadCache,
                 playerCache,
                 context,
-                provideProxy(dataStoreManager),
             ),
             downloadCache,
             playerCache,
@@ -419,18 +419,7 @@ private fun provideMediaSourceFactory(
         ),
         provideExtractorFactory(),
     ).setLoadErrorHandlingPolicy(LiveStreamAwareLoadErrorHandlingPolicy())
-
-/** The proxy the user configured, for every HTTP source the player opens. */
-private fun provideProxy(dataStoreManager: DataStoreManager): Proxy? =
-    dataStoreManager.getJVMProxy()?.let {
-        Proxy(
-            when (it.type) {
-                DataStoreManager.ProxyType.PROXY_TYPE_HTTP -> Proxy.Type.HTTP
-                DataStoreManager.ProxyType.PROXY_TYPE_SOCKS -> Proxy.Type.SOCKS
-            },
-            java.net.InetSocketAddress(it.host, it.port),
-        )
-    }
+}
 
 /**
  * HLS for live broadcasts. The playlist placeholder is resolved through the same getStream every
@@ -443,7 +432,7 @@ private fun provideLiveStreamMediaSourceFactory(
     dataStoreManager: DataStoreManager,
 ): HlsMediaSource.Factory =
     HlsMediaSource.Factory(
-        liveStreamDataSourceFactory(provideHttpDataSourceFactory(context, provideProxy(dataStoreManager))) { videoId ->
+        liveStreamDataSourceFactory(provideHttpDataSourceFactory(context)) { videoId ->
             runBlocking(Dispatchers.IO) {
                 streamRepository
                     .getStream(
@@ -512,7 +501,6 @@ private fun provideCacheDataSource(
     downloadCache: SimpleCache,
     playerCache: SimpleCache,
     context: Context,
-    proxy: Proxy? = null,
 ): CacheDataSource.Factory =
     CacheDataSource
         .Factory()
@@ -521,16 +509,17 @@ private fun provideCacheDataSource(
             CacheDataSource
                 .Factory()
                 .setCache(playerCache)
-                .setUpstreamDataSourceFactory(provideHttpDataSourceFactory(context, proxy)),
+                .setUpstreamDataSourceFactory(provideHttpDataSourceFactory(context)),
         ).setCacheWriteDataSinkFactory(null)
         .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR)
 
-/** The network underneath every player source: OkHttp behind the user's proxy, with header logging. */
+/**
+ * The network underneath every player source: OkHttp behind the user's proxy, with header logging.
+ * The proxy comes from [PlayerProxySelector], asked on every connection, so changing it in Settings
+ * reaches the player at once.
+ */
 @UnstableApi
-private fun provideHttpDataSourceFactory(
-    context: Context,
-    proxy: Proxy?,
-): DataSource.Factory =
+private fun provideHttpDataSourceFactory(context: Context): DataSource.Factory =
     DefaultDataSource.Factory(
         context,
         OkHttpDataSource.Factory(
@@ -538,9 +527,8 @@ private fun provideHttpDataSourceFactory(
                 .Builder()
                 .connectTimeout(30.seconds)
                 .readTimeout(30.seconds)
-                .proxy(
-                    proxy,
-                ).addInterceptor(
+                .proxySelector(PlayerProxySelector)
+                .addInterceptor(
                     HttpLoggingInterceptor()
                         .apply {
                             // Every audio chunk is a request; release builds do not print them.
