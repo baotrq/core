@@ -293,15 +293,31 @@ internal class DownloadUtils(
             // and writing every song's state each time flooded the database (thousands of writes a
             // minute once many songs are downloaded). Only songs whose state moved are written now.
             val written = mutableMapOf<String, Int>()
+            var previousIds = emptySet<String>()
             downloads.collect { download ->
+                // A song that left the map was removed (onDownloadRemoved, removeAllDownloads).
+                // Written here rather than in the listener so it lands after any older snapshot
+                // that still listed the song as downloaded.
+                (previousIds - download.keys).forEach { videoId ->
+                    written.remove(videoId)
+                    _downloadTask.update { it + (videoId to DownloadState.STATE_NOT_DOWNLOADED) }
+                    downloadingVideoIds.update {
+                        it.apply {
+                            remove(videoId)
+                        }
+                    }
+                    songRepository.updateDownloadState(videoId, DownloadState.STATE_NOT_DOWNLOADED)
+                }
+                previousIds = download.keys.toSet()
                 download.forEach {
                     val videoId = it.key
                     val audio = it.value.first?.state
                     val video = it.value.second?.state
                     val combineState =
-                        // Being deleted: it used to fall through to "downloading" below, so a song
-                        // whose download was removed showed as downloading for good.
                         if (audio == Download.STATE_REMOVING || video == Download.STATE_REMOVING) {
+                            // A removal reports REMOVING before the files go. The pairs below
+                            // would read it as downloading and write that over the
+                            // NOT_DOWNLOADED the caller has just set.
                             DownloadState.STATE_NOT_DOWNLOADED
                         } else {
                             when (audio to video) {
@@ -334,6 +350,11 @@ internal class DownloadUtils(
                             songRepository.updateDownloadState(videoId, DownloadState.STATE_DOWNLOADED)
                         }
                         DownloadState.STATE_DOWNLOADING -> {
+                            downloadingVideoIds.update {
+                                it.apply {
+                                    add(videoId)
+                                }
+                            }
                             songRepository.updateDownloadState(videoId, DownloadState.STATE_DOWNLOADING)
                         }
                         DownloadState.STATE_NOT_DOWNLOADED -> {
@@ -408,44 +429,39 @@ internal class DownloadUtils(
                                 }
                             }
                         }
+                        // The song's stored state is written by the collector alone. A write of
+                        // its own here, on a coroutine of its own, could land after a removal had
+                        // already reset the song, and nothing would correct it once the song left
+                        // the map.
                         when (download.state) {
                             Download.STATE_COMPLETED -> {
                                 playerCache.removeResource(id)
                             }
 
-                            Download.STATE_DOWNLOADING -> {
-                                coroutineScope.launch {
-                                    downloadingVideoIds.update {
-                                        it.apply {
-                                            add(songId)
-                                        }
-                                    }
-                                    songRepository.updateDownloadState(songId, DownloadState.STATE_DOWNLOADING)
-                                }
-                            }
                             else -> {
                             }
                         }
                     }
                 }
 
-                // Media3 reports the end of a removal here, not in onDownloadChanged.
+                // Without this a removed track stayed in the map at REMOVING for good, and the
+                // collector above rewrote its song's row on every later emission. Once both
+                // tracks are gone the song leaves the map, which the collector reads as removed.
                 override fun onDownloadRemoved(
                     downloadManager: DownloadManager,
                     download: Download,
                 ) {
                     val id = download.request.id
                     val isVideo = id.contains(MERGING_DATA_TYPE.VIDEO)
-                    val songId = id.removePrefix(MERGING_DATA_TYPE.VIDEO)
+                    val songId = if (isVideo) id.removePrefix(MERGING_DATA_TYPE.VIDEO) else id
                     _downloads.update { map ->
                         val current = map[songId] ?: return@update map
-                        val rest = if (isVideo) current.copy(second = null) else current.copy(first = null)
-                        if (rest.first == null && rest.second == null) map - songId else map + (songId to rest)
-                    }
-                    _downloadTask.update { it + (songId to DownloadState.STATE_NOT_DOWNLOADED) }
-                    coroutineScope.launch {
-                        downloadingVideoIds.update { it.apply { remove(songId) } }
-                        songRepository.updateDownloadState(songId, DownloadState.STATE_NOT_DOWNLOADED)
+                        val remaining = if (isVideo) current.copy(second = null) else current.copy(first = null)
+                        if (remaining.first == null && remaining.second == null) {
+                            map - songId
+                        } else {
+                            map + (songId to remaining)
+                        }
                     }
                 }
             },
