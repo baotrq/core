@@ -1,6 +1,7 @@
 package com.maxrave.domain.manager
 
 import com.maxrave.domain.data.model.network.ProxyConfiguration
+import com.maxrave.domain.data.player.EightDDirection
 import com.maxrave.domain.data.player.ReverbPreset
 import kotlinx.coroutines.flow.Flow
 
@@ -290,6 +291,19 @@ interface DataStoreManager {
     val reverbMix: Flow<Float>
 
     suspend fun setReverbMix(mix: Float)
+
+    val eightDEnabled: Flow<String>
+
+    suspend fun setEightDEnabled(enabled: Boolean)
+
+    val eightDDirection: Flow<String>
+
+    suspend fun setEightDDirection(direction: EightDDirection)
+
+    /** Seconds per full revolution, 3..30 in 0.5-second increments. */
+    val eightDPeriodSeconds: Flow<Float>
+
+    suspend fun setEightDPeriodSeconds(seconds: Float)
 
     val syncFollowToYouTube: Flow<String>
 
