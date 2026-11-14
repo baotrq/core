@@ -8,6 +8,9 @@ import com.maxrave.domain.data.player.GenericPlaybackParameters
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 
+/** How many waveform bars the waveform readers return per second of audio. */
+const val WAVEFORM_BARS_PER_SECOND = 1.25f
+
 /**
  * Abstract interface for media player implementations
  */
