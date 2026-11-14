@@ -20,6 +20,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.audio.SilenceSkippingAudioProcessor
+import com.maxrave.common.MERGING_DATA_TYPE
 import com.maxrave.domain.data.player.AudioEffects
 import com.maxrave.domain.data.player.AudioOutput
 import com.maxrave.domain.data.player.GenericCastState
@@ -322,6 +323,8 @@ internal class CrossfadeExoPlayerAdapter(
         val player: ExoPlayer,
         val mediaItem: GenericMediaItem,
         val filter: CrossfadeFilterAudioProcessor? = null,
+        /** Retries this player while it waits; taken off when it is promoted (see [precacheRetryListener]). */
+        val retryListener: Player.Listener? = null,
     )
 
     // VideoId -> PrecachedPlayer
@@ -995,11 +998,21 @@ internal class CrossfadeExoPlayerAdapter(
 
         notifyTimelineChanged("TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED")
 
-        if (playlist.size - 1 - currentMediaItemIndex <= maxPrecacheCount) {
-            coroutineScope.launch {
-                clearPrecacheExceptCurrentInternal()
-                triggerPrecachingInternal()
+        // Re-precache only when the appended track is one of the next ones Next plays. Under shuffle that
+        // is its distance in the shuffled order, not in the playlist; re-triggering on every append of a
+        // batch would cancel an in-flight extraction each time. The trigger keeps the precaches Next still
+        // reaches and releases the rest, so it needs no clear first (that threw away the next player).
+        val landsInPrecache =
+            if (internalShuffleModeEnabled) {
+                val gap =
+                    (shuffleIndices.getOrNull(playlist.lastIndex) ?: -1) -
+                        (shuffleIndices.getOrNull(localCurrentMediaItemIndex) ?: -1)
+                gap in 1..maxPrecacheCount
+            } else {
+                playlist.size - 1 - currentMediaItemIndex <= maxPrecacheCount
             }
+        if (landsInPrecache) {
+            coroutineScope.launch { triggerPrecachingInternal() }
         }
     }
 
@@ -1031,11 +1044,9 @@ internal class CrossfadeExoPlayerAdapter(
 
             notifyTimelineChanged("TIMELINE_CHANGE_REASON_PLAYLIST_CHANGED")
 
-            if (index - 1 - currentMediaItemIndex <= maxPrecacheCount) {
-                coroutineScope.launch {
-                    clearPrecacheExceptCurrentInternal()
-                    triggerPrecachingInternal()
-                }
+            // Same as the append above: under shuffle the insert may reorder what Next plays.
+            if (internalShuffleModeEnabled || index - 1 - currentMediaItemIndex <= maxPrecacheCount) {
+                coroutineScope.launch { triggerPrecachingInternal() }
             }
         }
     }
@@ -1356,16 +1367,18 @@ internal class CrossfadeExoPlayerAdapter(
                 }
         }
 
-    private fun getNextMediaItemIndex(): Int =
+    /** The index Next plays after [from]; [from] itself when nothing follows it. [from] defaults to the
+     *  current track, and precaching walks it forward to reach the track after next. */
+    private fun getNextMediaItemIndex(from: Int = localCurrentMediaItemIndex): Int =
         when (internalRepeatMode) {
             PlayerConstants.REPEAT_MODE_ALL -> {
                 if (internalShuffleModeEnabled && shuffleOrder.isNotEmpty()) {
-                    val currentShufflePos = shuffleIndices.getOrNull(localCurrentMediaItemIndex) ?: 0
+                    val currentShufflePos = shuffleIndices.getOrNull(from) ?: 0
                     val nextShufflePos = (currentShufflePos + 1) % shuffleOrder.size
-                    shuffleOrder.getOrNull(nextShufflePos) ?: localCurrentMediaItemIndex
+                    shuffleOrder.getOrNull(nextShufflePos) ?: from
                 } else {
-                    if (localCurrentMediaItemIndex < playlist.size - 1) {
-                        localCurrentMediaItemIndex + 1
+                    if (from < playlist.size - 1) {
+                        from + 1
                     } else {
                         0
                     }
@@ -1373,15 +1386,15 @@ internal class CrossfadeExoPlayerAdapter(
             }
             else -> {
                 if (internalShuffleModeEnabled && shuffleOrder.isNotEmpty()) {
-                    val currentShufflePos = shuffleIndices.getOrNull(localCurrentMediaItemIndex) ?: 0
+                    val currentShufflePos = shuffleIndices.getOrNull(from) ?: 0
                     val nextShufflePos = currentShufflePos + 1
                     if (nextShufflePos < shuffleOrder.size) {
-                        shuffleOrder.getOrNull(nextShufflePos) ?: localCurrentMediaItemIndex
+                        shuffleOrder.getOrNull(nextShufflePos) ?: from
                     } else {
-                        localCurrentMediaItemIndex
+                        from
                     }
                 } else {
-                    (localCurrentMediaItemIndex + 1).coerceAtMost(playlist.size - 1)
+                    (from + 1).coerceAtMost(playlist.size - 1)
                 }
             }
         }
@@ -1761,31 +1774,12 @@ internal class CrossfadeExoPlayerAdapter(
                     // 4. Setup our listener on new player
                     setupPlayerListenerInternal(player)
 
-                    // 5. Swap ForwardingPlayer delegate (moves MediaSession's listeners from old to new)
-                    forwardingPlayer.swapDelegate(player)
-
-                    // 5b. Notify MediaSession about the new media item
-                    // The MediaItem was set before the swap (either during precache or above),
-                    // so MediaSession's listener missed the onMediaItemTransition event.
-                    // play() below will trigger onIsPlayingChanged which causes MediaSession
-                    // to re-query metadata, but this explicit notify is safer and ensures
-                    // the notification updates immediately even if play() is delayed.
-                    forwardingPlayer.notifyMediaItemChanged()
-
-                    // 6. NOW release old player (it has no listeners anymore)
-                    if (oldPlayer != null && oldPlayer !== player) {
-                        try {
-                            oldPlayer.stop()
-                            oldPlayer.release()
-                        } catch (e: Exception) {
-                            Logger.w(TAG, "Error releasing old player: ${e.message}")
-                        }
-                    }
-
-                    // Audio focus is held at the adapter level (see Audio Focus section),
-                    // not per-player, so it survives this swap (#2155).
-
-                    // Apply settings
+                    // 4b. Apply settings and set the play state BEFORE swapping the
+                    // MediaSession delegate. The session must never observe this player
+                    // with playWhenReady=false while a track should be playing: media3
+                    // treats that as the user disengaging, arms its user-engaged
+                    // foreground-service timeout and demotes the service 10 minutes
+                    // later in the middle of playback (#2233).
                     player.volume = internalVolume
                     player.playbackParameters = PlaybackParameters(internalPlaybackSpeed, internalPlaybackPitch)
                     player.skipSilenceEnabled = internalSkipSilence
@@ -1804,6 +1798,28 @@ internal class CrossfadeExoPlayerAdapter(
                         player.pause()
                         transitionToState(InternalState.READY)
                     }
+
+                    // 5. Swap ForwardingPlayer delegate (moves MediaSession's listeners from old to new)
+                    forwardingPlayer.swapDelegate(player)
+
+                    // 5b. Notify MediaSession about the new media item and play state.
+                    // The MediaItem was set and play() was called before the swap, so
+                    // MediaSession's listener missed those events; this explicit notify
+                    // makes it re-read the player (metadata and playWhenReady=true).
+                    forwardingPlayer.notifyMediaItemChanged()
+
+                    // 6. NOW release old player (it has no listeners anymore)
+                    if (oldPlayer != null && oldPlayer !== player) {
+                        try {
+                            oldPlayer.stop()
+                            oldPlayer.release()
+                        } catch (e: Exception) {
+                            Logger.w(TAG, "Error releasing old player: ${e.message}")
+                        }
+                    }
+
+                    // Audio focus is held at the adapter level (see Audio Focus section),
+                    // not per-player, so it survives this swap (#2155).
 
                     forwardingPlayer.suppressPlaybackEnded = false
 
@@ -1916,10 +1932,7 @@ internal class CrossfadeExoPlayerAdapter(
                     //   lists FileNotFoundException as non-retriable, so this layer is the only chance
                     //   to recover; reloading re-runs the resolver, which now sees an incomplete cache
                     //   and resolves a real URL.
-                    val isRetryableSourceError =
-                        error.errorCode == PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED ||
-                            error.errorCode == PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS ||
-                            error.errorCode == PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND
+                    val isRetryableSourceError = error.isRetryableSourceError()
 
                     val currentVideoId = playlist.getOrNull(localCurrentMediaItemIndex)?.mediaId
                     // The progressive resolver found this track to be a live broadcast. Loading it
@@ -3145,15 +3158,6 @@ internal class CrossfadeExoPlayerAdapter(
 
     // ========== Internal: Precaching ==========
 
-    /** Removes and returns the precached player for [videoId]; one that already failed is released instead. */
-    private fun takeHealthyPrecachedPlayer(videoId: String): PrecachedPlayer? {
-        val cached = precachedPlayers.remove(videoId) ?: return null
-        val error = cached.player.playerError ?: return cached
-        Logger.w(TAG, "Discarding failed precached player for $videoId: ${error.errorCodeName}")
-        cached.player.release()
-        return null
-    }
-
     /**
      * Trigger precaching - mirrors GstreamerPlayerAdapter.triggerPrecachingInternal()
      *
@@ -3168,45 +3172,52 @@ internal class CrossfadeExoPlayerAdapter(
         precacheJob =
             coroutineScope.launch {
                 try {
-                    val indicesToPrecache = mutableListOf<Int>()
-
-                    val index = localCurrentMediaItemIndex
+                    // The tracks Next will actually play, in Next's own order: shuffle-aware, wrapping
+                    // under Repeat All. Picking `index + i` in playlist order precached tracks a shuffled
+                    // queue never reached, and nothing released them until the queue was edited (#2619).
+                    // Read before the job first suspends, so an edit landing meanwhile cannot shift them.
+                    val targets = mutableListOf<GenericMediaItem>()
+                    var from = localCurrentMediaItemIndex
                     for (i in 1..maxPrecacheCount) {
-                        val nextIndex =
-                            when (internalRepeatMode) {
-                                PlayerConstants.REPEAT_MODE_ALL -> {
-                                    (index + i) % playlist.size
-                                }
-                                else -> {
-                                    val next = index + i
-                                    if (next < playlist.size) next else break
-                                }
-                            }
-
-                        val nextVideoId = playlist.getOrNull(nextIndex)?.mediaId
-                        // A live broadcast is not precached: buffered ahead, it would start behind
-                        // the live edge by however long it waited in the queue.
-                        if (nextIndex != localCurrentMediaItemIndex &&
-                            !precachedPlayers.containsKey(nextVideoId) &&
-                            nextVideoId?.let(LiveStreamRegistry::isLive) != true
-                        ) {
-                            indicesToPrecache.add(nextIndex)
-                        }
+                        val next = getNextMediaItemIndex(from)
+                        if (next == from || next == localCurrentMediaItemIndex) break
+                        playlist.getOrNull(next)?.let { targets += it }
+                        from = next
                     }
 
-                    for (idx in indicesToPrecache) {
+                    // Release every precache Next no longer reaches: the shuffle picks it skipped, the
+                    // tracks ahead of a Previous or a jump. The current track's entry stays: a trigger
+                    // can run between the index moving and that track's load taking its entry.
+                    val targetIds = targets.mapTo(HashSet()) { it.mediaId }
+                    val currentId = currentMediaItem?.mediaId
+                    precachedPlayers.entries.removeIf { (id, cached) ->
+                        val stale = id !in targetIds && id != currentId
+                        if (stale) cleanupPlayerInternal(cached.player)
+                        stale
+                    }
+
+                    for (mediaItem in targets) {
                         if (!isActive) break
 
-                        val mediaItem = playlist.getOrNull(idx) ?: continue
+                        // Checked here, not when the targets were picked: one track can be both targets
+                        // (a radio repeats songs), and a second insert would overwrite the first player
+                        // without releasing it. A live broadcast is not precached: buffered ahead, it
+                        // would start behind the live edge by however long it waited in the queue.
+                        if (precachedPlayers.containsKey(mediaItem.mediaId) || LiveStreamRegistry.isLive(mediaItem.mediaId)) {
+                            continue
+                        }
 
                         try {
                             val pwf = createExoPlayerInstance()
                             pwf.player.setMediaItem(mediaItem.toMedia3MediaItem())
+                            val retryListener = precacheRetryListener(mediaItem.mediaId, pwf.player)
+                            pwf.player.addListener(retryListener)
                             pwf.player.prepare()
-                            precachedPlayers[mediaItem.mediaId] = PrecachedPlayer(pwf.player, mediaItem, pwf.filter)
-                            Logger.d(TAG, "Precached player for index $idx")
+                            precachedPlayers[mediaItem.mediaId] =
+                                PrecachedPlayer(pwf.player, mediaItem, pwf.filter, retryListener)
+                            Logger.d(TAG, "Precached player for ${mediaItem.mediaId}")
                         } catch (e: Exception) {
-                            Logger.e(TAG, "Precaching error for $idx: ${e.message}")
+                            Logger.e(TAG, "Precaching error for ${mediaItem.mediaId}: ${e.message}")
                         }
 
                         delay(100)
@@ -3223,6 +3234,62 @@ internal class CrossfadeExoPlayerAdapter(
         precacheJob?.cancel()
         precacheJob = null
     }
+
+    /**
+     * Remove and return the precached player for [videoId], or null if there is none
+     * or its preparation already failed. A failed player sits in STATE_IDLE with
+     * [ExoPlayer.getPlayerError] set; swapping it in would only surface that stale
+     * error and stop playback, so it is released here instead (#2239).
+     */
+    private fun takeHealthyPrecachedPlayer(videoId: String): PrecachedPlayer? {
+        val cached = precachedPlayers.remove(videoId) ?: return null
+        cached.retryListener?.let { cached.player.removeListener(it) }
+        val error = cached.player.playerError
+        if (error != null) {
+            Logger.w(TAG, "Discarding failed precached player for $videoId: ${error.errorCodeName}")
+            cleanupPlayerInternal(cached.player)
+            return null
+        }
+        return cached
+    }
+
+    /**
+     * Retries a precached player the way the playing one is retried in [setupPlayerListenerInternal]:
+     * drop the stored format so the resolver fetches a fresh URL, then prepare the same player again.
+     * That listener only serves the playing player, so a precache that failed past Media3's own load
+     * retries used to stay failed until its turn (#2239). After [maxRetryCount] tries it is left as it is.
+     */
+    private fun precacheRetryListener(
+        videoId: String,
+        player: ExoPlayer,
+    ): Player.Listener =
+        object : Player.Listener {
+            private var attempts = 0
+
+            override fun onPlayerError(error: PlaybackException) {
+                if (!error.isRetryableSourceError() || attempts >= maxRetryCount) return
+                if (precachedPlayers[videoId]?.player !== player) return
+                attempts++
+                Logger.w(TAG, "Precache source error (attempt $attempts/$maxRetryCount) for $videoId: ${error.errorCodeName}")
+                coroutineScope.launch {
+                    try {
+                        streamRepository.invalidateFormat(videoId)
+                        streamRepository.invalidateFormat("${MERGING_DATA_TYPE.VIDEO}$videoId")
+                        // Promoted or released while the format was being dropped: nothing left to retry.
+                        if (precachedPlayers[videoId]?.player === player) player.prepare()
+                    } catch (e: Exception) {
+                        if (e is CancellationException) throw e
+                        Logger.e(TAG, "Precache retry failed for $videoId: ${e.message}")
+                    }
+                }
+            }
+        }
+
+    /** Source errors a fresh stream URL can fix; the codes are explained in [setupPlayerListenerInternal]. */
+    private fun PlaybackException.isRetryableSourceError(): Boolean =
+        errorCode == PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED ||
+            errorCode == PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS ||
+            errorCode == PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND
 
     private fun clearPrecacheExceptCurrentInternal() {
         Logger.d(TAG, "Clearing precache")
