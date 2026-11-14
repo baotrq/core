@@ -255,6 +255,21 @@ interface MediaPlayerInterface {
      */
     fun refreshAudioOutputs() = Unit
 
+    /**
+     * The loudness outline of [mediaId]'s audio for the SoundCloud style's waveform: one value per
+     * 1 / [WAVEFORM_BARS_PER_SECOND] seconds of the track, each 0..1 against the track's loudest
+     * moment. Null when this backend cannot produce one (the default) or the audio could not be read.
+     *
+     * [onProgress] receives immutable snapshots as decoded audio becomes available. Zero slots mark
+     * undecoded ranges, e.g. after a seek. Android observes the active player's PCM until cancelled;
+     * a completed disk cache can return immediately. Desktop can return its completed measurement.
+     * Partial previews must not be saved as completed waveforms. Callbacks stop before return.
+     */
+    suspend fun loadWaveform(
+        mediaId: String,
+        onProgress: (FloatArray) -> Unit = {},
+    ): FloatArray? = null
+
     // Listener management
     fun addListener(listener: MediaPlayerListener)
 

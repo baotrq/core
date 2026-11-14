@@ -1403,6 +1403,14 @@ class MpvPlayerAdapter(
     @Volatile
     private var preferredAudioDevice: String? = null
 
+    override suspend fun loadWaveform(
+        mediaId: String,
+        onProgress: (FloatArray) -> Unit,
+    ): FloatArray? {
+        if (mediaId.isBlank() || LiveStreamRegistry.isLive(mediaId)) return null
+        return MpvWaveformReader.read(mediaId, onProgress) { waveformSourceUrl(mediaId) }
+    }
+
     /**
      * The track's audio alone, found the way [extractPlayableUrl] finds it: a download first, then the
      * format's own audio URL. No fallback extraction: a waveform is not worth another extraction.
