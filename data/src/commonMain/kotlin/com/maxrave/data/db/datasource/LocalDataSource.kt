@@ -2,6 +2,9 @@ package com.maxrave.data.db.datasource
 
 import DatabaseDao
 import com.maxrave.data.db.MusicDatabase
+import com.maxrave.data.librarysync.SyncChangeRecorder
+import com.maxrave.data.librarysync.SyncKind
+import com.maxrave.data.librarysync.newSyncId
 import com.maxrave.domain.data.entities.AlbumEntity
 import com.maxrave.domain.data.entities.ArtistEntity
 import com.maxrave.domain.data.entities.ArtistMotionEntity
@@ -47,6 +50,8 @@ private const val PLACEHOLDER_ALBUM_NAME = "Album"
 internal class LocalDataSource(
     private val databaseDao: DatabaseDao,
     private val musicDatabase: MusicDatabase,
+    // Every write to an item library sync carries also tells this, which notes it only while paired.
+    private val syncRecorder: SyncChangeRecorder,
 ) {
     suspend fun checkpoint() = databaseDao.checkpoint()
 
@@ -269,7 +274,10 @@ internal class LocalDataSource(
     suspend fun updateLiked(
         liked: Int,
         videoId: String,
-    ) = databaseDao.updateLiked(liked, videoId)
+    ) {
+        databaseDao.updateLiked(liked, videoId)
+        syncRecorder.flag(SyncKind.SONG_LIKE, videoId, liked == 1)
+    }
 
     suspend fun updateDurationSeconds(
         durationSeconds: Int,
@@ -324,7 +332,10 @@ internal class LocalDataSource(
     suspend fun updateFollowed(
         followed: Int,
         channelId: String,
-    ) = databaseDao.updateFollowed(followed, channelId)
+    ) {
+        databaseDao.updateFollowed(followed, channelId)
+        syncRecorder.flag(SyncKind.ARTIST_FOLLOW, channelId, followed == 1)
+    }
 
     suspend fun getArtist(channelId: String) = databaseDao.getArtist(channelId)
 
@@ -348,7 +359,10 @@ internal class LocalDataSource(
     suspend fun updateAlbumLiked(
         liked: Int,
         albumId: String,
-    ) = databaseDao.updateAlbumLiked(liked, albumId)
+    ) {
+        databaseDao.updateAlbumLiked(liked, albumId)
+        syncRecorder.flag(SyncKind.ALBUM_LIKE, albumId, liked == 1)
+    }
 
     suspend fun getAlbum(albumId: String) = databaseDao.getAlbum(albumId)
 
@@ -383,7 +397,10 @@ internal class LocalDataSource(
     suspend fun updatePlaylistLiked(
         liked: Int,
         playlistId: String,
-    ) = databaseDao.updatePlaylistLiked(liked, playlistId)
+    ) {
+        databaseDao.updatePlaylistLiked(liked, playlistId)
+        syncRecorder.flag(SyncKind.PLAYLIST_LIKE, playlistId, liked == 1)
+    }
 
     suspend fun getPlaylist(playlistId: String) = databaseDao.getPlaylist(playlistId)
 
@@ -423,24 +440,49 @@ internal class LocalDataSource(
 
     suspend fun getLocalPlaylist(id: Long) = databaseDao.getLocalPlaylist(id)
 
-    suspend fun insertLocalPlaylist(localPlaylist: LocalPlaylistEntity) = databaseDao.insertLocalPlaylist(localPlaylist)
+    // Every new playlist gets its library-sync identity at birth; see LocalPlaylistEntity.syncId.
+    suspend fun insertLocalPlaylist(localPlaylist: LocalPlaylistEntity): Long {
+        val id = databaseDao.insertLocalPlaylist(localPlaylist.withSyncId())
+        if (id != -1L) syncRecorder.playlistMeta(id)
+        return id
+    }
 
     suspend fun insertLocalPlaylistWithTracks(
         localPlaylist: LocalPlaylistEntity,
         videoIds: List<String>,
-    ) = databaseDao.insertLocalPlaylistWithTracks(localPlaylist, videoIds)
+    ): Long {
+        val id = databaseDao.insertLocalPlaylistWithTracks(localPlaylist.withSyncId(), videoIds)
+        if (id != -1L) {
+            syncRecorder.playlistMeta(id)
+            videoIds.distinct().forEach { syncRecorder.playlistTrack(id, it, inPlaylist = true) }
+        }
+        return id
+    }
 
-    suspend fun deleteLocalPlaylist(id: Long) = databaseDao.deleteLocalPlaylist(id)
+    suspend fun deleteLocalPlaylist(id: Long) {
+        // Read first: once the row is gone there is no syncId left to tell the other device.
+        val syncId = if (syncRecorder.active()) databaseDao.getLocalPlaylist(id)?.syncId else null
+        databaseDao.deleteLocalPlaylist(id)
+        syncId?.let { syncRecorder.playlistDeleted(it) }
+    }
 
     suspend fun updateLocalPlaylistTitle(
         title: String,
         id: Long,
-    ) = databaseDao.updateLocalPlaylistTitle(title, id)
+    ) {
+        databaseDao.updateLocalPlaylistTitle(title, id)
+        syncRecorder.playlistMeta(id)
+    }
 
     suspend fun updateLocalPlaylistThumbnail(
         thumbnail: String,
         id: Long,
-    ) = databaseDao.updateLocalPlaylistThumbnail(thumbnail, id)
+    ) {
+        databaseDao.updateLocalPlaylistThumbnail(thumbnail, id)
+        syncRecorder.playlistMeta(id)
+    }
+
+    private fun LocalPlaylistEntity.withSyncId() = if (syncId == null) copy(syncId = newSyncId()) else this
 
     suspend fun updateLocalPlaylistTracks(
         tracks: List<String>,
@@ -468,7 +510,10 @@ internal class LocalDataSource(
     suspend fun updateLocalPlaylistYouTubePlaylistId(
         id: Long,
         ytId: String?,
-    ) = databaseDao.updateLocalPlaylistYouTubePlaylistId(id, ytId)
+    ) {
+        databaseDao.updateLocalPlaylistYouTubePlaylistId(id, ytId)
+        syncRecorder.playlistWhole(id)
+    }
 
     suspend fun updateLocalPlaylistYouTubePlaylistSyncState(
         id: Long,
@@ -518,7 +563,10 @@ internal class LocalDataSource(
 
     suspend fun getLocalPlaylistByYoutubePlaylistId(playlistId: String) = databaseDao.getLocalPlaylistByYoutubePlaylistId(playlistId)
 
-    suspend fun insertSetVideoId(setVideoIdEntity: SetVideoIdEntity) = databaseDao.insertSetVideoId(setVideoIdEntity)
+    suspend fun insertSetVideoId(setVideoIdEntity: SetVideoIdEntity) {
+        databaseDao.insertSetVideoId(setVideoIdEntity)
+        syncRecorder.setVideoIdAdded(setVideoIdEntity.videoId, setVideoIdEntity.youtubePlaylistId)
+    }
 
     suspend fun getSetVideoId(
         videoId: String,
@@ -530,10 +578,16 @@ internal class LocalDataSource(
         youtubePlaylistId: String,
     ) = databaseDao.deleteSetVideoId(videoId, youtubePlaylistId)
 
-    suspend fun insertPairSongLocalPlaylist(pairSongLocalPlaylist: PairSongLocalPlaylist) =
+    suspend fun insertPairSongLocalPlaylist(pairSongLocalPlaylist: PairSongLocalPlaylist) {
         databaseDao.insertPairSongLocalPlaylist(pairSongLocalPlaylist)
+        syncRecorder.playlistTrack(pairSongLocalPlaylist.playlistId, pairSongLocalPlaylist.songId, inPlaylist = true)
+    }
 
-    suspend fun unsyncLocalPlaylist(id: Long) = databaseDao.unsyncLocalPlaylist(id)
+    suspend fun unsyncLocalPlaylist(id: Long) {
+        databaseDao.unsyncLocalPlaylist(id)
+        // The playlist row now carries no link, so the other device unlinks it too.
+        syncRecorder.playlistMeta(id)
+    }
 
     suspend fun getPlaylistPairOfSong(
         videoId: String,
@@ -614,17 +668,24 @@ internal class LocalDataSource(
         playlistId: Long,
         fromIndex: Int,
         toIndex: Int,
-    ) = databaseDao.moveSongInPlaylist(playlistId, fromIndex, toIndex)
+    ): Boolean {
+        val moved = databaseDao.moveSongInPlaylist(playlistId, fromIndex, toIndex)
+        if (moved) syncRecorder.playlistOrder(playlistId)
+        return moved
+    }
 
     suspend fun editPositionOfSongInPlaylist(
         playlistId: Long,
         videoId: String,
         newPosition: Int,
-    ) = databaseDao.editPositionOfSongInPlaylist(
-        playlistId,
-        videoId,
-        newPosition,
-    )
+    ) {
+        databaseDao.editPositionOfSongInPlaylist(
+            playlistId,
+            videoId,
+            newPosition,
+        )
+        syncRecorder.playlistOrder(playlistId)
+    }
 
     suspend fun getAllPlaylistPairSongByPosition(playlistId: Long) =
         databaseDao.getAllPlaylistPairSongByPosition(playlistId)
@@ -644,7 +705,10 @@ internal class LocalDataSource(
     suspend fun deletePairSongLocalPlaylist(
         playlistId: Long,
         videoId: String,
-    ) = databaseDao.deletePairSongLocalPlaylist(playlistId, videoId)
+    ) {
+        databaseDao.deletePairSongLocalPlaylist(playlistId, videoId)
+        syncRecorder.playlistTrack(playlistId, videoId, inPlaylist = false)
+    }
 
     suspend fun getGoogleAccounts() = databaseDao.getAllGoogleAccount()
 
@@ -742,7 +806,9 @@ internal class LocalDataSource(
                     isFavorite = isFavorite,
                     favoriteTime = if (isFavorite) now() else null,
                 )
-            return databaseDao.insertPodcast(updatedPodcast) > 0
+            val saved = databaseDao.insertPodcast(updatedPodcast) > 0
+            if (saved) syncRecorder.flag(SyncKind.PODCAST_FAVORITE, podcastId, isFavorite)
+            return saved
         } else {
             return false
         }

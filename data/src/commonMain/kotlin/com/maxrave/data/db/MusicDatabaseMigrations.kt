@@ -16,7 +16,7 @@ import kotlin.time.ExperimentalTime
  *
  * Named so the migration-path test can see it; bump it with every schema change, as before.
  */
-const val MUSIC_DATABASE_VERSION: Int = 27
+const val MUSIC_DATABASE_VERSION: Int = 28
 
 /**
  * The migrations Room cannot write by itself, and therefore the gaps in the [AutoMigration] chain

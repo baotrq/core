@@ -5,6 +5,12 @@ import com.maxrave.data.loginsync.LoginSyncHostRepositoryImpl
 import com.maxrave.data.loginsync.LoginSyncStore
 import com.maxrave.data.loginsync.SignInSyncRepositoryImpl
 import com.maxrave.domain.repository.SignInSyncRepository
+import com.maxrave.data.librarysync.LibrarySyncHostRepositoryImpl
+import com.maxrave.data.librarysync.SyncApplier
+import com.maxrave.data.librarysync.SyncEngine
+import com.maxrave.data.librarysync.SyncedSettings
+import com.maxrave.domain.repository.LibrarySyncHostRepository
+import com.maxrave.domain.repository.LibrarySyncRepository
 import com.maxrave.domain.repository.LoginSyncHostRepository
 import org.koin.core.context.loadKoinModules
 import org.koin.dsl.module
@@ -19,6 +25,11 @@ actual fun loadLoginSyncModule() {
             single { LoginSyncStore(get(), get(), get()) }
             single<SignInSyncRepository> { SignInSyncRepositoryImpl(get()) }
             single<LoginSyncHostRepository> { LoginSyncHostRepositoryImpl(get()) }
+            // Library sync (#2663): this computer keeps the log and serves its paired phones.
+            single { SyncedSettings(get(), get()) }
+            single { SyncEngine(get(), get(), SyncApplier(get(), get()), get()) }
+            single<LibrarySyncHostRepository> { LibrarySyncHostRepositoryImpl(get(), get(), get(), get(), get(), get()) }
+            single<LibrarySyncRepository> { get<LibrarySyncHostRepository>() }
         },
     )
 }
