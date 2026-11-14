@@ -177,7 +177,7 @@ private fun JsonObject.text(key: String): String? = this[key]?.jsonPrimitive?.co
 
 private fun JsonObject.number(key: String): Double? = this[key]?.jsonPrimitive?.doubleOrNull
 
-/** The entry LRCLIB should answer with: this recording, timed lyrics first, then the closest length. */
+/** The entry LRCLIB should answer with: this recording, word-synced first, then line-synced, then the closest length. */
 internal fun bestLrclibMatch(
     results: List<LrclibObject>,
     title: String,
@@ -196,7 +196,8 @@ internal fun bestLrclibMatch(
                 COMMUNITY_DURATION_TOLERANCE_SECONDS,
             )
         }.minWithOrNull(
-            compareBy<LrclibObject> { it.syncedLyrics.isNullOrEmpty() }
+            compareBy<LrclibObject> { !it.hasWordSync }
+                .thenBy { it.syncedLyrics.isNullOrEmpty() }
                 .thenBy { distance(it.duration?.toDouble(), durationSeconds) },
         )
 

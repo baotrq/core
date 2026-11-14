@@ -14,4 +14,6 @@ data class LrclibObject(
     val instrumental: Boolean,
     val plainLyrics: String?,
     val syncedLyrics: String?,
+    val lyricsfile: String? = null,
+    val hasWordSync: Boolean = false,
 )

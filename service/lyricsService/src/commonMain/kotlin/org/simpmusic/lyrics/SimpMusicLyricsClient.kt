@@ -25,6 +25,7 @@ import org.simpmusic.lyrics.parser.kugouLrc
 import org.simpmusic.lyrics.parser.kugouSongHashes
 import org.simpmusic.lyrics.parser.lrcRedIsrc
 import org.simpmusic.lyrics.parser.megalobizSheetId
+import org.simpmusic.lyrics.parser.parseLrclibLyrics
 import org.simpmusic.lyrics.parser.parseSyncedLyrics
 import org.simpmusic.lyrics.parser.parseTtmlLyrics
 import org.simpmusic.lyrics.parser.parseUnsyncedLyrics
@@ -137,19 +138,7 @@ class SimpMusicLyricsClient {
                     q_artist = q_artist,
                 ).body<List<LrclibObject>>()
         val lrclibObject: LrclibObject? = bestLrclibMatch(rs, q_track, q_artist, duration)
-        if (lrclibObject != null) {
-            val syncedLyrics = lrclibObject.syncedLyrics
-            val plainLyrics = lrclibObject.plainLyrics
-            if (!syncedLyrics.isNullOrEmpty()) {
-                parseSyncedLyrics(syncedLyrics)
-            } else if (!plainLyrics.isNullOrEmpty()) {
-                parseUnsyncedLyrics(plainLyrics)
-            } else {
-                null
-            }
-        } else {
-            null
-        }
+        lrclibObject?.let { parseLrclibLyrics(it) }
     }
 
     /** KuGou's public lyric endpoints, line-synced. Null when no song of this title and length is there. */
