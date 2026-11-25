@@ -30,7 +30,17 @@ data class YouTubeInitialPage(
                 val name: Name?,
                 @SerialName("vssId")
                 val vssId: String?,
+                @SerialName("languageCode")
+                val languageCode: String? = null,
+                // "asr" for YouTube's speech recognition, which is always in the spoken (sung) language.
+                @SerialName("kind")
+                val kind: String? = null,
             ) {
+                val isAuto: Boolean get() = kind == "asr" || vssId?.startsWith("a.") == true
+
+                /** The language without its region ("vi" for "vi-VN"), lowercased. */
+                val baseLanguage: String? get() = languageCode?.substringBefore('-')?.lowercase()?.takeIf { it.isNotEmpty() }
+
                 @Serializable
                 data class Name(
                     @SerialName("simpleText")

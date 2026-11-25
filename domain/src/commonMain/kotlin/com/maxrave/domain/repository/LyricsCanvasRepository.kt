@@ -6,6 +6,7 @@ import com.maxrave.domain.data.model.browse.album.Track
 import com.maxrave.domain.data.model.browse.artist.ArtistEditorial
 import com.maxrave.domain.data.model.canvas.CanvasResult
 import com.maxrave.domain.data.model.metadata.Lyrics
+import com.maxrave.domain.data.model.metadata.YouTubeCaptionTrack
 import com.maxrave.domain.manager.DataStoreManager
 import com.maxrave.domain.utils.Resource
 import kotlinx.coroutines.flow.Flow
@@ -27,10 +28,15 @@ interface LyricsCanvasRepository {
         language: String,
     )
 
+    /** [trackId] is a [YouTubeCaptionTrack.id] picked for this song; null picks the sung language. */
     fun getYouTubeCaption(
         preferLang: String,
         videoId: String,
+        trackId: String? = null,
     ): Flow<Resource<Pair<Lyrics, Lyrics?>>>
+
+    /** The transcripts YouTube has for [videoId]; empty when it has none or could not be asked. */
+    suspend fun getYouTubeCaptionTracks(videoId: String): List<YouTubeCaptionTrack>
 
     fun getCanvas(
         dataStoreManager: DataStoreManager,

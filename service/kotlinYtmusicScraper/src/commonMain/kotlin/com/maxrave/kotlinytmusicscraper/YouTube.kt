@@ -2061,35 +2061,54 @@ class YouTube {
             )
         }
 
+    /** The caption tracks YouTube lists for [videoId], in YouTube's own order. */
+    suspend fun getYouTubeCaptionTracks(videoId: String) =
+        runCatching {
+            ytMusic
+                .player(WEB, videoId, null, null)
+                .body<YouTubeInitialPage>()
+                .captions
+                ?.playerCaptionsTracklistRenderer
+                ?.captionTracks
+                .orEmpty()
+                .filter { !it.baseUrl.isNullOrEmpty() }
+        }
+
+    /**
+     * The transcript of [videoId] plus its translation into [preferLang]. [trackId] is a track's
+     * `vssId` picked by the user; when it is null or no longer listed, the track is chosen by
+     * [pickCaptionTrack].
+     */
     suspend fun getYouTubeCaption(
         videoId: String,
         preferLang: String,
+        trackId: String? = null,
     ) = runCatching {
-        val ytWeb = ytMusic.player(WEB, videoId, null, null).body<YouTubeInitialPage>()
+        val tracks = getYouTubeCaptionTracks(videoId).getOrThrow()
+        val track =
+            tracks.firstOrNull { trackId != null && it.vssId == trackId }
+                ?: pickCaptionTrack(tracks)
+                ?: throw IllegalStateException("No captions")
+        val baseUrl = track.baseUrl?.replace("&fmt=srv3", "") ?: ""
         val baseCaption =
             ytMusic
-                .getYouTubeCaption(
-                    ytWeb.captions?.playerCaptionsTracklistRenderer?.captionTracks?.firstOrNull()?.baseUrl?.replace(
-                        "&fmt=srv3",
-                        "",
-                    ) ?: "",
-                ).body<Transcript>()
+                .getYouTubeCaption(baseUrl)
+                .body<Transcript>()
                 .tryDecodeText()
         val translateCaption =
-            try {
-                ytMusic
-                    .getYouTubeCaption(
-                        "${
-                            ytWeb.captions?.playerCaptionsTracklistRenderer?.captionTracks?.firstOrNull()?.baseUrl?.replace(
-                                "&fmt=srv3",
-                                "",
-                            )
-                        }&tlang=$preferLang",
-                    ).body<Transcript>()
-                    .tryDecodeText()
-            } catch (e: Exception) {
-                e.printStackTrace()
+            if (track.baseLanguage == preferLang.substringBefore('-').lowercase()) {
+                // Already in the wanted language: a "translation" would only repeat every line.
                 null
+            } else {
+                try {
+                    ytMusic
+                        .getYouTubeCaption("$baseUrl&tlang=$preferLang")
+                        .body<Transcript>()
+                        .tryDecodeText()
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    null
+                }
             }
         return@runCatching baseCaption to translateCaption
     }
@@ -2418,3 +2437,16 @@ class YouTube {
 
     }
 }
+
+/**
+ * The track whose words are the ones sung. YouTube lists tracks in no useful order (an English
+ * translation often comes first), but its speech-recognition track is always in the spoken language,
+ * so that names the language to look for: a track written by hand in it first, then any track written
+ * by hand, then the speech-recognition track itself, which mishears singing.
+ */
+fun pickCaptionTrack(tracks: List<YouTubeInitialPage.Captions.PlayerCaptionsTracklistRenderer.CaptionTrack>) =
+    tracks.firstOrNull { it.isAuto }?.baseLanguage.let { sung ->
+        tracks.firstOrNull { !it.isAuto && sung != null && it.baseLanguage == sung }
+            ?: tracks.firstOrNull { !it.isAuto }
+            ?: tracks.firstOrNull()
+    }

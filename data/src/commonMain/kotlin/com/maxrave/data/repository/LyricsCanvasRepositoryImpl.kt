@@ -13,6 +13,7 @@ import com.maxrave.domain.data.model.browse.artist.ArtistLogo
 import com.maxrave.domain.data.model.browse.artist.ArtistMotion
 import com.maxrave.domain.data.model.canvas.CanvasResult
 import com.maxrave.domain.data.model.metadata.Lyrics
+import com.maxrave.domain.data.model.metadata.YouTubeCaptionTrack
 import com.maxrave.domain.data.model.metadata.SimpMusicLyrics
 import com.maxrave.domain.extension.now
 import com.maxrave.domain.manager.DataStoreManager
@@ -98,11 +99,12 @@ internal class LyricsCanvasRepositoryImpl(
     override fun getYouTubeCaption(
         preferLang: String,
         videoId: String,
+        trackId: String?,
     ): Flow<Resource<Pair<Lyrics, Lyrics?>>> =
         flow {
             runCatching {
                 youTube
-                    .getYouTubeCaption(videoId, preferLang)
+                    .getYouTubeCaption(videoId, preferLang, trackId)
                     .onSuccess { lyrics ->
                         emit(
                             Resource.Success<Pair<Lyrics, Lyrics?>>(
@@ -115,6 +117,24 @@ internal class LyricsCanvasRepositoryImpl(
                     }
             }
         }.flowOn(Dispatchers.IO)
+
+    override suspend fun getYouTubeCaptionTracks(videoId: String): List<YouTubeCaptionTrack> =
+        withContext(Dispatchers.IO) {
+            youTube
+                .getYouTubeCaptionTracks(videoId)
+                .onFailure { Logger.d("Lyrics", "Caption tracks for $videoId: ${it.message}") }
+                .getOrNull()
+                .orEmpty()
+                .mapNotNull { track ->
+                    val id = track.vssId ?: return@mapNotNull null
+                    YouTubeCaptionTrack(
+                        id = id,
+                        languageCode = track.languageCode.orEmpty(),
+                        name = track.name?.simpleText ?: track.languageCode.orEmpty(),
+                        isAuto = track.isAuto,
+                    )
+                }
+        }
 
     override fun getCanvas(
         dataStoreManager: DataStoreManager,
